@@ -1,6 +1,11 @@
 {
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc -p .tsconfig.json"
+  },
   "dependencies": {},
   "devDependencies": {
+    "@types/bun": "^1.4.0",
     "@types/node": "^26.2.0"
   }
 }
