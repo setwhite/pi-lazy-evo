@@ -5,7 +5,7 @@
  * 自动模式（turn_end 时钟）将来复用同一份提示词，暂不实现。
  * 协议文档路径由调用方（Runtime）注入，提示词层不感知部署位置。
  */
-import { GATE_LABEL } from "../../gate.ts";
+import { GATE_LABEL, type PendingEntity } from "../../gate.ts";
 
 /** 沉淀提示词集：record/query/verify 三条注入指令 */
 export interface SettlerPrompts {
@@ -14,7 +14,7 @@ export interface SettlerPrompts {
 	/** 检索：带关键词（可空）的检索提醒 */
 	query(terms: string): string;
 	/** 验证：带待验清单的验证提醒 */
-	verify(entities: { id: string; kind: string; state: string }[]): string;
+	verify(entities: PendingEntity[]): string;
 }
 
 /** 用协议文档路径构建提示词集（路径与提示词内容解耦） */
@@ -37,7 +37,7 @@ export function createPrompts(protocolPath: string): SettlerPrompts {
 			);
 		},
 		verify: (entities) => {
-			const list = entities.map((e) => `- ${e.id} [${e.kind}] ${GATE_LABEL[e.state as keyof typeof GATE_LABEL]}`).join("\n");
+			const list = entities.map((e) => `- ${e.id} [${e.kind}] ${GATE_LABEL[e.state]}`).join("\n");
 			return (
 				`[lazy-memory] Manual verification requested for these entities (gate states attached):\n${list}\n` +
 				`Read ${protocolPath} first, then verify each entity yourself: check the front-matter format, conflicts against other entities, ` +

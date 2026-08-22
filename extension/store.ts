@@ -4,6 +4,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseFrontmatter } from "./tools/frontmatter.ts";
 
 /** 记忆库根目录：优先 $MEMORY_DIR，其次 <cwd>/.memory */
 export function memoryDir(cwd: string): string {
@@ -121,19 +122,21 @@ export function readEntity(cwd: string, id: string): EntityFile | null {
 	return { meta, raw, body: raw.replace(/^---[\s\S]*?---\n?/, "").trim() };
 }
 
+/** 合并出处：已有且不含新出处则分号追加（保持 front-matter 单行） */
+function mergeSources(existing: string | undefined, source: string): string {
+	if (!existing) return source;
+	return existing.split("；").includes(source) ? existing : `${existing}；${source}`;
+}
+
 /** 写入或更新实体；更新时 source 追加新出处（分号分隔去重，保持 front-matter 单行） */
 export function writeEntity(cwd: string, input: { id: string; kind: string; sources: string; assertions: string[] }): EntityFile {
 	ensureMemoryDir(cwd);
 	const existing = readEntity(cwd, input.id);
-	const sources = existing
-		? existing.meta.sources.split("；").includes(input.sources)
-			? existing.meta.sources
-			: existing.meta.sources + "；" + input.sources
-		: input.sources;
-	const frontmatter = `---\nid: ${input.id}\nkind: ${input.kind}\nsources: ${sources}\n---\n`;
-	const raw = frontmatter + "\n" + input.assertions.join("\n") + "\n";
-	writeFileSync(existing?.meta.path ?? join(memoryDir(cwd), "entities", input.id + ".md"), raw);
-	return readEntity(cwd, input.id)!;
+	const sources = mergeSources(existing?.meta.sources, input.sources);
+	const path = existing?.meta.path ?? join(memoryDir(cwd), "entities", input.id + ".md");
+	const raw = `---\nid: ${input.id}\nkind: ${input.kind}\nsources: ${sources}\n---\n` + "\n" + input.assertions.join("\n") + "\n";
+	writeFileSync(path, raw);
+	return { meta: { id: input.id, path, kind: input.kind, sources, mtimeMs: statSync(path).mtimeMs }, raw, body: input.assertions.join("\n") };
 }
 
 /** 列出验证记录；可指定实体 id 过滤（target 兼容带/不带 .memory/ 前缀） */
@@ -162,13 +165,14 @@ function parseVerification(path: string, targetSuffix: string | null): Verificat
 	if (!fm) return null;
 	const target = String(fm.target ?? "");
 	if (targetSuffix && !target.endsWith(targetSuffix)) return null;
+	if (fm.result !== "passed" && fm.result !== "failed") return null;
 	const checkedAt = String(fm.checked_at ?? "");
 	return {
 		path,
 		target,
 		validator: String(fm.validator ?? ""),
 		checkedAt,
-		result: fm.result === "failed" ? "failed" : "passed",
+		result: fm.result,
 		evidence: String(fm.evidence ?? ""),
 		checkedAtMs: parseCheckedAt(checkedAt),
 	};
@@ -202,15 +206,21 @@ export function appendVerification(
 	return path;
 }
 
-/** 简易 front-matter 解析：优先标准闭合块；兼容 v1 旧记录（只开头 ---、无闭合） */
-function parseFrontmatter(raw: string): Record<string, string> | null {
-	const closed = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
-	const open = closed ?? /^---\r?\n([\s\S]*)$/.exec(raw);
-	if (!open) return null;
-	const fields: Record<string, string> = {};
-	for (const line of open[1].split(/\r?\n/)) {
-		const kv = /^([a-zA-Z_]+):\s*(.*)$/.exec(line.trim());
-		if (kv) fields[kv[1]] = kv[2];
-	}
-	return fields;
+/** 实体与其验证记录配对（readLibrary 的返回项） */
+export interface EntityWithVerifications {
+	meta: EntityMeta;
+	verifications: VerificationRecord[];
 }
+
+/** 一次 IO 读完整个库：实体全量 + 全部验证记录（按 target 分组配对），供批量门控使用 */
+export function readLibrary(cwd: string): EntityWithVerifications[] {
+	const byTarget = new Map<string, VerificationRecord[]>();
+	for (const v of listVerifications(cwd)) {
+		const list = byTarget.get(v.target);
+		if (list) list.push(v);
+		else byTarget.set(v.target, [v]);
+	}
+	return listEntities(cwd).map((meta) => ({ meta, verifications: byTarget.get(`entities/${meta.id}.md`) ?? [] }));
+}
+
+/** 简易 front-matter 解析见 tools/frontmatter.ts（实体与验证记录共用） */

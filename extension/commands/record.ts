@@ -3,12 +3,12 @@
  */
 import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SettlerActions } from "../agents/settler/agent.ts";
-import { notify } from "./notify.ts";
+import { notify } from "../tools/notify.ts";
 
 /** /memory record：注入沉淀提醒 */
 async function record(_args: string, ctx: ExtensionCommandContext, actions: SettlerActions): Promise<void> {
 	actions.record();
-	notify(ctx, ["Reminder injected — the agent will settle memory now."], "Memory Record");
+	notify(ctx, "Memory Record", ["Reminder injected — the agent will settle memory now."]);
 }
 
 /** 注册 /memory record */

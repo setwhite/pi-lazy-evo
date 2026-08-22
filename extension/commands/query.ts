@@ -3,12 +3,12 @@
  */
 import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SettlerActions } from "../agents/settler/agent.ts";
-import { notify } from "./notify.ts";
+import { notify } from "../tools/notify.ts";
 
 /** /memory query：注入检索提醒 */
 async function query(args: string, ctx: ExtensionCommandContext, actions: SettlerActions): Promise<void> {
 	actions.query(args.trim());
-	notify(ctx, ["Reminder injected — the agent will search memory now."], "Memory Query");
+	notify(ctx, "Memory Query", ["Reminder injected — the agent will search memory now."]);
 }
 
 /** 注册 /memory query */

@@ -2,7 +2,7 @@
  * 门控：由最新验证记录 + 时间戳规则推导实体的信任状态（四态）。
  * 状态不落盘，每次查询实时计算——正文与验证记录是唯一真相源。
  */
-import type { EntityMeta, VerificationRecord } from "./store.ts";
+import type { EntityMeta, EntityWithVerifications, VerificationRecord } from "./store.ts";
 
 /** 门控四态 */
 export type GateState = "passed" | "failed" | "none" | "stale";
@@ -49,4 +49,25 @@ export function computeGate(meta: EntityMeta, verifications: VerificationRecord[
 		state = latest.result;
 	}
 	return { state, latest, entityMtimeMs: meta.mtimeMs };
+}
+
+/** 实体与门控结果配对（gateLibrary 的返回项） */
+export interface GatedEntity {
+	meta: EntityMeta;
+	gate: GateResult;
+}
+
+/** 待验证实体清单项：命令算好清单传给 agent 提示词 */
+export interface PendingEntity {
+	id: string;
+	kind: string;
+	state: GateState;
+}
+
+/** 需要（重新）验证的门控状态：未证实 + 过期 */
+export const NEEDS_VERIFICATION: ReadonlySet<GateState> = new Set<GateState>(["none", "stale"]);
+
+/** 批量门控：整库实体 → 门控结果（纯计算，不 IO） */
+export function gateLibrary(items: EntityWithVerifications[]): GatedEntity[] {
+	return items.map(({ meta, verifications }) => ({ meta, gate: computeGate(meta, verifications) }));
 }
