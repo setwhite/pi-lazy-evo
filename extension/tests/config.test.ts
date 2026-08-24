@@ -29,6 +29,39 @@ describe("loadConfig", () => {
 	});
 });
 
+describe("loadConfig auto 配置", () => {
+	const settings = (ns: unknown) => writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ "lazy-memory": ns }, null, 2) + "\n");
+
+	it("无配置时使用默认阈值与轮数上限", () => {
+		const config = loadConfig(cwd);
+		expect(config.autoWatermarkTokens).toBe(50_000);
+		expect(config.autoMaxTurns).toBe(12);
+		expect(config.autoModel).toBeUndefined();
+	});
+
+	it("可配置阈值、轮数与便宜模型", () => {
+		settings({ autoWatermarkTokens: 8000, autoMaxTurns: 8, autoModel: { provider: "openrouter", id: "a-cheap-model", thinking: "low" } });
+		const config = loadConfig(cwd);
+		expect(config.autoWatermarkTokens).toBe(8000);
+		expect(config.autoMaxTurns).toBe(8);
+		expect(config.autoModel).toEqual({ provider: "openrouter", id: "a-cheap-model", thinking: "low" });
+	});
+
+	it("非法阈值类型/非正数被忽略回默认", () => {
+		settings({ autoWatermarkTokens: "8000", autoMaxTurns: -1 });
+		const config = loadConfig(cwd);
+		expect(config.autoWatermarkTokens).toBe(50_000);
+		expect(config.autoMaxTurns).toBe(12);
+	});
+
+	it("autoModel 缺 provider 或 id 被忽略（回退主模型）", () => {
+		settings({ autoModel: { provider: "openrouter" } });
+		expect(loadConfig(cwd).autoModel).toBeUndefined();
+		settings({ autoModel: "fast" });
+		expect(loadConfig(cwd).autoModel).toBeUndefined();
+	});
+});
+
 describe("setMode", () => {
 	it("只改 lazy-memory 命名空间，保留文件其余内容", () => {
 		const path = join(cwd, ".pi", "settings.json");
