@@ -85,19 +85,24 @@ lazy-memory 通过 5 个 `/memory` 命令和一套协议手册工作。命令负
 | `autoModel.provider` / `.id` | （无） | 后台便宜模型（如 `openrouter`/`gpt-4o-mini`），缺省用主会话模型 |
 | `autoModel.thinking` | `low` | 便宜模型的思考档（off/low/medium…） |
 | `autoMaxTurns` | 12 | 单个 worker 轮数上限（成本保护） |
+| `autoMemoTools` | 见下 | 沉淀 worker 工具白名单（默认 `read,grep,ls,bash,write,edit`） |
+| `autoVerifyTools` | 见下 | 验证 worker 工具白名单（默认在沉淀基础上加 `web_search,web_fetch`） |
 
 ```jsonc
 {"lazy-memory": {
   "mode": "auto",
   "autoWatermarkTokens": 30000,
   "autoModel": {"provider": "openrouter", "id": "gpt-4o-mini", "thinking": "low"},
-  "autoMaxTurns": 8
+  "autoMaxTurns": 8,
+  "autoVerifyTools": ["read", "grep", "ls", "bash", "write", "edit", "web_search", "web_fetch"]
 }}
 ```
 
 auto 会串行启动两个独立 worker：先**沉淀**（取最近对话提炼实体），后**验证**（核对
 未验/过期实体），都按 `protocol/` 手册操作 `.memory/`。“便宜模型”要在 pi 里已配置好
-对应 provider/模型（`pi auth` 可查）。
+对应 provider/模型（`pi auth` 可查）。验证 worker 默认带联网工具（web-research
+验证器用），需先 `/web-tools` 配好搜索 provider；不需要就把它从 `autoVerifyTools` 删掉。
+注意：`--tools` 是白名单语义——配置的工具集会**替换**默认集，不要漏掉 read/grep/write。
 
 ## 门控状态解读
 

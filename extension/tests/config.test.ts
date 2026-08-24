@@ -37,6 +37,8 @@ describe("loadConfig auto 配置", () => {
 		expect(config.autoWatermarkTokens).toBe(64_000);
 		expect(config.autoMaxTurns).toBe(12);
 		expect(config.autoModel).toBeUndefined();
+		expect(config.autoMemoTools).toEqual(["read", "grep", "ls", "bash", "write", "edit"]);
+		expect(config.autoVerifyTools).toEqual(["read", "grep", "ls", "bash", "write", "edit", "web_search", "web_fetch"]);
 	});
 
 	it("可配置阈值、轮数与便宜模型", () => {
@@ -59,6 +61,15 @@ describe("loadConfig auto 配置", () => {
 		expect(loadConfig(cwd).autoModel).toBeUndefined();
 		settings({ autoModel: "fast" });
 		expect(loadConfig(cwd).autoModel).toBeUndefined();
+	});
+
+	it("可覆盖 worker 工具白名单：解析去重且非法值回默认", () => {
+		settings({ autoMemoTools: ["read", "bash", "read"], autoVerifyTools: "nope" });
+		const config = loadConfig(cwd);
+		expect(config.autoMemoTools).toEqual(["read", "bash"]);
+		expect(config.autoVerifyTools).toEqual(["read", "grep", "ls", "bash", "write", "edit", "web_search", "web_fetch"]);
+		settings({ autoMemoTools: [1, "", "write", "grep", "grep", "write"] });
+		expect(loadConfig(cwd).autoMemoTools).toEqual(["write", "grep"]);
 	});
 });
 

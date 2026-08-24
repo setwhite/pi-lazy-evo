@@ -101,7 +101,7 @@ describe("worker 提示词", () => {
 
 describe("buildAutoWorkerArgs", () => {
 	it("配置了便宜模型：组装 --model provider/id 与 --thinking，写提示词文件", () => {
-		const built = withCleanup(buildAutoWorkerArgs({ model: { provider: "openrouter", id: "a-model", thinking: "low" }, promptContent: "P" }));
+		const built = withCleanup(buildAutoWorkerArgs({ model: { provider: "openrouter", id: "a-model", thinking: "low" }, tools: ["read", "bash"], promptContent: "P" }));
 		expect(built.args).toContain("--model");
 		expect(built.args).toContain("openrouter/a-model");
 		expect(built.args).toContain("--thinking");
@@ -110,8 +110,15 @@ describe("buildAutoWorkerArgs", () => {
 	});
 
 	it("未配置模型：不带 --model，仍写提示词文件", () => {
-		const built = withCleanup(buildAutoWorkerArgs({ promptContent: "P" }));
+		const built = withCleanup(buildAutoWorkerArgs({ promptContent: "P", tools: ["read"] }));
 		expect(built.args).not.toContain("--model");
 		expect(built.args.some((a) => a === "--mode" || a === "-p" || a === "--no-session")).toBe(true);
+	});
+
+	it("工具白名单以逗号拼接传给 --tools（默认验证集含 web）", () => {
+		const built = withCleanup(buildAutoWorkerArgs({ promptContent: "P", tools: ["read", "grep", "bash", "web_search", "web_fetch"] }));
+		const idx = built.args.indexOf("--tools");
+		expect(idx).toBeGreaterThan(-1);
+		expect(built.args[idx + 1]).toBe("read,grep,bash,web_search,web_fetch");
 	});
 });

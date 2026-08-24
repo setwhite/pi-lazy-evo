@@ -20,8 +20,6 @@ const WORKER_TIMEOUT_MS = 10 * 60_000;
 const TRANSCRIPT_ENTRY_LIMIT = 30;
 /** 每条消息文本截断长度 */
 const MESSAGE_TEXT_MAX = 2_000;
-/** worker 可用工具（保留读库/检索/写库，不放开其他） */
-const WORKER_TOOLS = "read,grep,ls,bash,write,edit";
 
 /** auto 触发状态机（闭包持有，非模块级全局） */
 export interface AutoState {
@@ -113,12 +111,13 @@ export function buildVerifyWorkerPrompt(input: { protocolDir: string; cwd: strin
 		"你是 lazy-memory 的后台验证代理，任务是在 headless 环境里操作 .memory/ 记忆库。",
 		`- 操作手册：${input.protocolDir}/verify.md；实体/验证格式见 ${input.protocolDir}/schema.md。`,
 		"- 任务：找出 .memory/ 里 unverified 或 stale 的实体（无验证记录、或正文自上次验证后被修改），逐条核对并按协议追加验证记录（evidence 必填，只追加不覆盖）。",
+		"- 涉及时效性/外部可查事实时，可用联网检索做 web-research 验证（若工具可用）；本地可核对的用 format/conflict/local-evidence。",
 		...promptHeader(input.protocolDir, input.cwd, input.maxTurns),
 	].join("\n");
 }
 
 /** 组装子进程调用参数与提示词内容（纯函数，可测；spawn 由调用方执行） */
-export function buildAutoWorkerArgs(input: { model?: AutoModel; promptContent: string }): { command: string; args: string[]; promptFile: string; promptDir: string } {
+export function buildAutoWorkerArgs(input: { model?: AutoModel; tools: string[]; promptContent: string }): { command: string; args: string[]; promptFile: string; promptDir: string } {
 	const promptDir = mkdtempSync(join(tmpdir(), "lazy-memory-auto-"));
 	const promptFile = join(promptDir, "worker.md");
 	writeFileSync(promptFile, input.promptContent, "utf8");
@@ -129,7 +128,7 @@ export function buildAutoWorkerArgs(input: { model?: AutoModel; promptContent: s
 	} else {
 		args.push("--thinking", "low");
 	}
-	args.push("--tools", WORKER_TOOLS, "--append-system-prompt", promptFile);
+	args.push("--tools", input.tools.join(","), "--append-system-prompt", promptFile);
 	args.push("Task: 请执行上述后台任务。");
 	return { command: "pi", args, promptFile, promptDir };
 }
@@ -156,14 +155,14 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 async function runAutoWorker(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings): Promise<void> {
 	const transcript = extractTranscript(ctx.sessionManager.getEntries());
 	const memoPrompt = buildMemoWorkerPrompt({ protocolDir: runtime.protocolDir, cwd: ctx.cwd, transcript, maxTurns: config.autoMaxTurns });
-	await runSingleWorker("沉淀", runtime, ctx, config, memoPrompt);
+	await runSingleWorker("沉淀", runtime, ctx, config, config.autoMemoTools, memoPrompt);
 	const verifyPrompt = buildVerifyWorkerPrompt({ protocolDir: runtime.protocolDir, cwd: ctx.cwd, maxTurns: config.autoMaxTurns });
-	await runSingleWorker("验证", runtime, ctx, config, verifyPrompt);
+	await runSingleWorker("验证", runtime, ctx, config, config.autoVerifyTools, verifyPrompt);
 }
 
 /** 跑单个 worker：写提示词 → spawn → 通知结果 → 清理临时目录 */
-async function runSingleWorker(kind: string, runtime: Runtime, ctx: ExtensionContext, config: MemorySettings, promptContent: string): Promise<void> {
-	const built = buildAutoWorkerArgs({ model: config.autoModel, promptContent });
+async function runSingleWorker(kind: string, runtime: Runtime, ctx: ExtensionContext, config: MemorySettings, tools: string[], promptContent: string): Promise<void> {
+	const built = buildAutoWorkerArgs({ model: config.autoModel, tools, promptContent });
 	try {
 		const summary = await spawnWorker(built.command, built.args, ctx.cwd, WORKER_TIMEOUT_MS);
 		const model = config.autoModel ? config.autoModel.id : "主模型";

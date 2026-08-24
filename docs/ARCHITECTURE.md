@@ -138,6 +138,8 @@ front-matter 五字段：
   - **沉淀 worker**：喂最近会话素材，按 `record.md` 提炼实体；
   - **验证 worker**：不带素材，按 `verify.md` 核对 unverified/stale 实体；
   - 模型用 `autoModel`（便宜模型，缺省回退主会话模型），轮数上限 `autoMaxTurns` 写进提示词；
+  - 两 worker 的工具白名单可配（`autoMemoTools` / `autoVerifyTools`，默认验证集含
+    `web_search,web_fetch` 供 web-research 验证器联网核对），配置覆盖即替换默认集；
   - 防循环：首次吸收基线、compaction 回落重设基线、worker 在跑时吸收增量不重复触发。
 - **custom verifier**（协议预留）：`mode: custom + command`，无需改协议与存储。
 

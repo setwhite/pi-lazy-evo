@@ -24,6 +24,11 @@ export interface AutoModel {
 	thinking?: string;
 }
 
+/** 沉淀 worker 默认工具白名单：读库/检索/写库够用，不放开联网 */
+const DEFAULT_MEMO_TOOLS = ["read", "grep", "ls", "bash", "write", "edit"] as const;
+/** 验证 worker 默认工具白名单：多 web 检索，支持 web-research 验证器 */
+const DEFAULT_VERIFY_TOOLS = [...DEFAULT_MEMO_TOOLS, "web_search", "web_fetch"] as const;
+
 /** 扩展配置 */
 export interface MemorySettings {
 	/** 运行模式 */
@@ -34,10 +39,20 @@ export interface MemorySettings {
 	autoMaxTurns: number;
 	/** 便宜模型（缺省用主会话模型） */
 	autoModel?: AutoModel;
+	/** 沉淀 worker 工具白名单 */
+	autoMemoTools: string[];
+	/** 验证 worker 工具白名单 */
+	autoVerifyTools: string[];
 }
 
 /** 默认配置：手动挡；触发器 64k token；worker 上限 12 轮 */
-const DEFAULTS: MemorySettings = { mode: "manual", autoWatermarkTokens: 64_000, autoMaxTurns: 12 };
+const DEFAULTS: MemorySettings = {
+	mode: "manual",
+	autoWatermarkTokens: 64_000,
+	autoMaxTurns: 12,
+	autoMemoTools: [...DEFAULT_MEMO_TOOLS],
+	autoVerifyTools: [...DEFAULT_VERIFY_TOOLS],
+};
 
 /** 解析正整数：非有限正整数返回 undefined（非法忽略） */
 function positiveInt(value: unknown): number | undefined {
@@ -54,6 +69,13 @@ function parseAutoModel(value: unknown): AutoModel | undefined {
 	const model: AutoModel = { provider, id };
 	if (typeof m.thinking === "string" && m.thinking.length > 0) model.thinking = m.thinking;
 	return model;
+}
+
+/** 解析工具白名单：非空字符串数组（去重）；非法或空返回 undefined（用默认） */
+function parseTools(value: unknown): string[] | undefined {
+	if (!Array.isArray(value) || value.length === 0) return undefined;
+	const tools = value.filter((t): t is string => typeof t === "string" && t.length > 0);
+	return tools.length === 0 ? undefined : [...new Set(tools)];
 }
 
 /** 解析单个 settings.json 中的命名空间为配置片段；失败或缺命名空间返回 null */
@@ -76,6 +98,10 @@ function readNamespace(path: string): Partial<MemorySettings> | null {
 	if (turns !== undefined) partial.autoMaxTurns = turns;
 	const model = parseAutoModel(data.autoModel);
 	if (model) partial.autoModel = model;
+	const memoTools = parseTools(data.autoMemoTools);
+	if (memoTools) partial.autoMemoTools = memoTools;
+	const verifyTools = parseTools(data.autoVerifyTools);
+	if (verifyTools) partial.autoVerifyTools = verifyTools;
 	return partial;
 }
 
@@ -89,6 +115,8 @@ export function loadConfig(cwd: string): MemorySettings {
 		if (ns.autoWatermarkTokens !== undefined) merged.autoWatermarkTokens = ns.autoWatermarkTokens;
 		if (ns.autoMaxTurns !== undefined) merged.autoMaxTurns = ns.autoMaxTurns;
 		if (ns.autoModel) merged.autoModel = ns.autoModel;
+		if (ns.autoMemoTools) merged.autoMemoTools = ns.autoMemoTools;
+		if (ns.autoVerifyTools) merged.autoVerifyTools = ns.autoVerifyTools;
 	}
 	return merged;
 }
