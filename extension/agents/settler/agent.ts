@@ -20,7 +20,7 @@ export interface SettlerActions {
 
 /** 用给定的运行时构建沉淀动作（协议路径与注入通道都来自 runtime，命令 handler 零装配） */
 export function createSettlerActions(runtime: Runtime): SettlerActions {
-	const prompts = createPrompts(runtime.protocolPath);
+	const prompts = createPrompts(runtime.protocolDir);
 	return {
 		record: () => runtime.dispatch(prompts.record()),
 		query: (terms) => runtime.dispatch(prompts.query(terms)),

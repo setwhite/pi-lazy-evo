@@ -12,13 +12,13 @@ import { notify } from "../tools/notify.ts";
 async function verify(args: string, ctx: ExtensionCommandContext, actions: SettlerActions): Promise<void> {
 	const targetId = args.trim();
 	const all = gateLibrary(readLibrary(ctx.cwd));
-	if (!all.length) {
-		notify(ctx, "Memory Verify", ["Memory library is empty."]);
-		return;
-	}
 	const selected = targetId ? all.filter((g) => g.meta.id === targetId) : all;
 	if (targetId && !selected.length) {
 		notify(ctx, "Memory Verify", [`Entity not found: ${targetId}`]);
+		return;
+	}
+	if (!all.length) {
+		notify(ctx, "Memory Verify", ["Memory library is empty."]);
 		return;
 	}
 	// 指定 id 时复验其当前状态（含 passed/failed）；未指定时只挑待验（unverified/stale）

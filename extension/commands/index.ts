@@ -1,6 +1,6 @@
 /**
  * 命令注册入口：组装 SettlerActions 并注册全部 5 个命令。
- * 注册顺序对齐 PROTOCOL.md 的命令表：总览 → 沉淀 → 检索 → 验证 → 挡位。
+ * 注册顺序对齐协议手册：总览 → 沉淀 → 检索 → 验证 → 挡位。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createSettlerActions } from "../agents/settler/agent.ts";

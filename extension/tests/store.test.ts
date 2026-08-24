@@ -10,7 +10,6 @@ import { join } from "node:path";
 import {
 	appendVerification,
 	ensureMemoryDir,
-	listEntities,
 	listVerifications,
 	readEntity,
 	readLibrary,
