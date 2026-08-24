@@ -35,7 +35,8 @@ bunx tsc -p .tsconfig.json   # 期望零错误
   新增存储字段/子域时保持 barrel 导出入口稳定
 - `commands/` 只做"解析输入 → 调 core/agent → 通知"，不内联业务计算；
   需要聚合时优先在 gate 提纯函数（如 `summarizeLibrary` / `selectPending`）
-- `agents/settler/` 是命令与未来 auto 模式共用的执行层，新增触发方式直接复用
+- `agents/settler/` 是命令执行层（动作 = 拼提示词 → dispatch）；
+  auto 自动挡不走 dispatch，另起独立子进程按协议直读——见下节
 
 ## 数据格式约束
 
@@ -64,12 +65,19 @@ bunx tsc -p .tsconfig.json   # 期望零错误
 若命令需要"读库→门控→注入"，参照 `/memory verify` 的模式：
 `readLibrary`（IO）→ `gateLibrary`（纯算）→ `selectPending`（纯筛）→ `actions.verify` → `notify`。
 
-## 扩展点：auto 自动模式（未实现）
+## 扩展点：auto 自动模式（已实现）
 
-设计稿：`hooks/` 挂 turn_end 时钟 + token 水位，到水位时调用
-`createSettlerActions(runtime).record()` 等动作（与命令共用执行层）。
-当前 `mode: auto` 仅写 settings.json 记录状态，无实际行为。
-落地时：补充 hooks 实现、写入 `docs/ARCHITECTURE.md` 扩展点小节、补测试。
+`hooks/auto.ts` 挂 turn_end 时钟 + token 水位。与初稿不同，auto **不复用**
+`createSettlerActions`（那是主会话假入），而是 spawn 独立 pi 子进程（便宜模型、
+独立上下文、自带通用工具）按 `protocol/` 手册操作 `.memory/`——与手动模式同一套哲学：
+扩展不代写库，worker 是“又一个按协议执行的代理”。
+
+触发判定是纯函数 `decideAutoTrigger`（吸收基线 / compaction 回落 / 增量达阈值 / 防并发），
+提示词与 spawn 参数组装也是纯函数，可无 IO 单测；真实 spawn 是薄壳。
+串行跑：先沉淀 worker（带素材，record）后验证 worker（无素材，verify）。
+
+改动链路：`config.ts` 加 auto 配置项 → `hooks/auto.ts` 组装 spawn → `index.ts` 挂钩子 →
+`commands/mode.ts` 文案 → 文档。调阈值/模型在 `.pi/settings.json` 的 `lazy-memory` 命名空间。
 
 ## 测试结构
 

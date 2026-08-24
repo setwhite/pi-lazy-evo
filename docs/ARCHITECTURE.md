@@ -7,7 +7,7 @@
 **.memory 实体记忆库的治理协议 + pi 扩展**：
 
 - **协议**（`extension/protocol/`）：schema.md 共享规则 + record/query/verify 三份操作手册，是代理执行任务的契约；
-- **扩展**（TypeScript）：命令扳机（`/memory` 族）、门控计算、挡位状态（auto 预留）；
+- **扩展**（TypeScript）：命令扳机（`/memory` 族）、门控计算、挡位状态、自动挡 worker；
 - **哲学**：零工具注入——扩展只做"扳机 / 门控 / 协议"，**读写与验证全部由代理按协议手册执行**。
 
 > 为什么零工具注入：扩展不给模型注入任何专用工具（不注入 search/write 之类），
@@ -18,19 +18,20 @@
 
 ```
 extension/
-├── index.ts              # 装配入口：Runtime + 注册命令（保留根，pi 自动加载点）
+├── index.ts              # 装配入口：Runtime + 注册命令 + 挂 auto 钩子（保留根，pi 自动加载点）
 ├── core/                 # 核心逻辑层
-│   ├── config.ts         #   配置：settings.json 的 lazy-memory 命名空间（挡位）
+│   ├── config.ts         #   配置：settings.json 的 lazy-memory 命名空间（挡位 + auto 阈值/模型/轮数）
 │   ├── store.ts          #   存储 barrel：透出全符号 + readLibrary 整库配对
 │   ├── entities.ts       #   实体域：校验 / 读写 / 出处合并
 │   ├── verifications.ts  #   验证域：追加 / 解析 / 过滤
 │   ├── layout.ts         #   目录骨架：memoryDir / ensureMemoryDir
 │   └── gate.ts           #   门控纯计算：四态 + 聚合摘要（summarize/selectPending）
-├── agents/settler/       # 执行层：动作 = 拼提示词 → dispatch（命令与未来 auto 共用）
+├── agents/settler/       # 执行层：命令动作 = 拼提示词 → dispatch
 ├── commands/             # 5 个 /memory 命令扳机
 ├── tools/                # 通用工具（无状态）：notify、frontmatter 解析
 ├── tests/                # bun:test 单元测试（按域拆分）
-├── hooks/                # 自动模式钩子占位（未实现，暂空）
+├── hooks/
+│   └── auto.ts           # 自动挡：turn_end 水位触发，串行双 worker（沉淀/验证）
 └── protocol/             # 协议手册（代理执行契约）
 ```
 
@@ -39,14 +40,14 @@ extension/
 | 层 | 职责 | 说明 |
 |---|---|---|
 | index | 装配 + 共享状态 | 入口内联 Runtime（协议路径 + dispatch 注入），薄壳不分文件 |
-| config | 配置 | settings.json 的 lazy-memory 命名空间读写（挡位） |
+| config | 配置 | settings.json 的 lazy-memory 命名空间读写（挡位 + auto 阈值/模型/轮数） |
 | store | 存储 IO | `.memory/` 读写；barrel 在 store.ts，子域在 entities/verifications/layout |
 | gate | 纯计算 | 四态门控 + 批量门控 + 聚合摘要，**不 IO** |
-| agents/settler | 执行层 | 动作 = 拼提示词 → dispatch；命令与未来自动模式共用 |
+| agents/settler | 执行层 | 动作 = 拼提示词 → dispatch；命令专用 |
 | commands | 扳机 + 展示 | 只算输入与 TUI 通知，不跑协议逻辑 |
 | tools | 通用工具 | 无状态：TUI 通知、front-matter 解析 |
 | tests | 单元测试 | bun:test 按域拆分，`bun test` 一键跑 |
-| hooks | 钩子（空） | 自动模式 turn_end 钩子设计后启用 |
+| hooks | 自动挡 | turn_end 水位判定 + 串行双 worker spawn，不参与命令流程 |
 | protocol | 协议文档 | 代理执行契约，扩展不执行其语义 |
 
 **依赖方向**：`index → commands → agents/settler → core`；`tools` 与 `protocol` 被多方引用；
@@ -114,7 +115,9 @@ front-matter 五字段：
 - `index.ts` 的 `Runtime` 持有 `protocolDir` 与 `dispatch`（`pi.sendUserMessage`），
   通过依赖注入传给命令与 agent，无模块级全局变量；
 - `protocolDir` 默认取源码同目录的 `protocol/`，提示词层不感知部署位置；
-  移动时改 `index.ts` 一处即可。
+  移动时改 `index.ts` 一处即可；
+- `registerAutoModeHooks` 在入口挂载 turn_end 钩子，触发判定为纯函数（可单测），
+  真实 spawn 为薄壳；worker 子进程是 `pi --mode json -p --no-session`，自带通用工具。
 
 ## 6. 设计决策
 
@@ -130,8 +133,12 @@ front-matter 五字段：
 
 ## 7. 扩展点
 
-- **auto 自动模式**（未实现）：设计为 `hooks/` turn_end 时钟 + token 水位触发，
-  直接复用 `createSettlerActions` 同一组动作；当前 `mode: auto` 仅记录为状态。
+- **auto 自动模式**（已实现）：`hooks/auto.ts` 挂 turn_end 时钟，`getContextUsage` 取累计
+  token，增量达 `autoWatermarkTokens`（默认 50k）时，串行 spawn 两个独立 pi 子进程：
+  - **沉淀 worker**：喂最近会话素材，按 `record.md` 提炼实体；
+  - **验证 worker**：不带素材，按 `verify.md` 核对 unverified/stale 实体；
+  - 模型用 `autoModel`（便宜模型，缺省回退主会话模型），轮数上限 `autoMaxTurns` 写进提示词；
+  - 防循环：首次吸收基线、compaction 回落重设基线、worker 在跑时吸收增量不重复触发。
 - **custom verifier**（协议预留）：`mode: custom + command`，无需改协议与存储。
 
 ## 8. 发布待办（自 v1→v2 迁移遗留）

@@ -65,7 +65,10 @@ lazy-memory 通过 5 个 `/memory` 命令和一套协议手册工作。命令负
 
 ### /memory mode [auto|manual] —— 挡位
 
-查看或切换运行模式（写入 settings.json）。当前 auto 未实现，仅记录状态。
+查看或切换运行模式（写入 settings.json）。
+
+- `manual`：只有手动 `/memory` 命令会触碰记忆库（默认，最可控）；
+- `auto`：自动挡——后台便宜模型按 token 水位自己完成**沉淀 + 验证**，无需抬手。
 
 ```
 /memory mode
@@ -73,6 +76,28 @@ lazy-memory 通过 5 个 `/memory` 命令和一套协议手册工作。命令负
   Current mode: manual
   Usage: /memory mode [auto|manual]
 ```
+
+**auto 配置**（编辑项目 `.pi/settings.json` 的 `lazy-memory` 命名空间，重启生效）：
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `autoWatermarkTokens` | 50000 | 会话新增 token 达此值触发一次自动沉淀，越小越勤 |
+| `autoModel.provider` / `.id` | （无） | 后台便宜模型（如 `openrouter`/`gpt-4o-mini`），缺省用主会话模型 |
+| `autoModel.thinking` | `low` | 便宜模型的思考档（off/low/medium…） |
+| `autoMaxTurns` | 12 | 单个 worker 轮数上限（成本保护） |
+
+```jsonc
+{"lazy-memory": {
+  "mode": "auto",
+  "autoWatermarkTokens": 30000,
+  "autoModel": {"provider": "openrouter", "id": "gpt-4o-mini", "thinking": "low"},
+  "autoMaxTurns": 8
+}}
+```
+
+auto 会串行启动两个独立 worker：先**沉淀**（取最近对话提炼实体），后**验证**（核对
+未验/过期实体），都按 `protocol/` 手册操作 `.memory/`。“便宜模型”要在 pi 里已配置好
+对应 provider/模型（`pi auth` 可查）。
 
 ## 门控状态解读
 

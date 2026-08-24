@@ -30,7 +30,7 @@ ln -s "$(pwd)/extension" ~/.pi/extensions/lazy-memory
 /memory record     # 让代理把近期结论沉淀进 .memory/
 /memory query      # 让代理检索 .memory/（可带关键词）
 /memory verify     # 算出待验清单，让代理逐条核对
-/memory mode       # 查看/切换挡位（auto 未实现）
+/memory mode       # 查看/切换挡位（manual / auto）
 ```
 
 用起来长这样：
@@ -50,7 +50,7 @@ ln -s "$(pwd)/extension" ~/.pi/extensions/lazy-memory
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 架构设计：定位、分层、数据模型、设计决策 |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 开发指南：测试、编码约定、如何新增命令 |
-| [USER.md](USER.md) | 用户指南：5 个 `/memory` 命令的完整用法 |
+| [USER.md](USER.md) | 用户指南：5 个 `/memory` 命令完整用法 + auto 配置 |
 | `extension/protocol/` | 代理执行的操作手册（英文，唯一真相源） |
 
 ## 目录结构
@@ -62,11 +62,11 @@ lazy-memory/
 │   ├── index.ts             # 装配入口（保留根）
 │   ├── core/                # 核心逻辑层：config / store / gate
 │   ├── commands/            # 5 个 /memory 命令扳机
-│   ├── agents/settler/      # 执行层：拼提示词，命令与未来 auto 共用
+│   ├── agents/settler/      # 命令执行层：拼提示词 → dispatch
 │   ├── tools/               # 通用工具：TUI 通知、front-matter 解析
 │   ├── tests/               # bun:test 单元测试（按域拆分）
 │   ├── protocol/            # 协议手册：schema + record/query/verify
-│   └── hooks/               # 自动模式钩子占位（未实现）
+│   └── hooks/               # 自动挡：turn_end 水位触发双 worker（沉淀/验证）
 └── .memory/                 # 运行时记忆库（不入库）
 ```
 
