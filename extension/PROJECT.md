@@ -18,7 +18,9 @@ lazy-memory/                    ← 单一项目仓库（v1 历史保留在 git�
 ├── README.md                   项目说明（对外英文）
 ├── LICENSE                     MIT（沿用）
 ├── extension/                  扩展源码（pi 加载入口）
-│   ├── index.ts / config.ts / store.ts / gate.ts
+│   ├── index.ts / config.ts / gate.ts
+│   ├── store.ts              存储层 barrel：透出全符号 + readLibrary 整库配对
+│   ├── entities.ts / verifications.ts / layout.ts  存储子域（实体 / 验证 / 目录骨架）
 │   ├── agents/settler/         (agent.ts + prompts.ts)
 │   ├── commands/               (5 命令)
 │   ├── tools/                  (notify.ts + frontmatter.ts 通用工具)
@@ -34,8 +36,8 @@ lazy-memory/                    ← 单一项目仓库（v1 历史保留在 git�
 |---|---|---|
 | index | 装配 + 共享状态 | 入口内联 Runtime（协议路径 + dispatch 注入），薄壳不分文件 |
 | config | 配置 | settings.json 的 lazy-memory 命名空间读写（挡位） |
-| store | 存储 IO | .memory/ 读写；readLibrary 一次 IO 整库配对 |
-| gate | 纯计算 | 四态门控；gateLibrary 批量门控，不 IO |
+| store | 存储 IO | .memory/ 读写；store.ts 为 barrel + readLibrary 一次 IO 整库配对，子域在 entities.ts / verifications.ts / layout.ts |
+| gate | 纯计算 | 四态门控 + 批量门控 + 聚合摘要（summarizeLibrary/selectPending），不 IO |
 | agents/settler | 执行层 | 动作 = 拼提示词 → dispatch；命令与未来自动模式共用 |
 | commands | 扳机 + 展示 | 只算输入与 TUI 通知，不跑协议逻辑 |
 | tools | 通用工具 | 无状态：TUI 通知 notify、front-matter 解析 |
