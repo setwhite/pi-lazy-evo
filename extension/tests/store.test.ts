@@ -16,7 +16,7 @@ import {
 	validateId,
 	validateKind,
 	writeEntity,
-} from "../store.ts";
+} from "../core/store.ts";
 
 let cwd: string;
 let mem: string;

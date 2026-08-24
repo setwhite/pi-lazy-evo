@@ -12,7 +12,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMemoryCommands } from "../commands/index.ts";
 import { createSettlerActions } from "../agents/settler/agent.ts";
 import { createPrompts } from "../agents/settler/prompts.ts";
-import { appendVerification, writeEntity } from "../store.ts";
+import { appendVerification, writeEntity } from "../core/store.ts";
 import { Runtime } from "../index.ts";
 
 /** 命令定义（与 pi 的注册结构对齐） */

@@ -5,7 +5,7 @@
  * 直接调同一组动作，命令与时钟共用此层。
  */
 import type { Runtime } from "../../index.ts";
-import type { PendingEntity } from "../../gate.ts";
+import type { PendingEntity } from "../../core/gate.ts";
 import { createPrompts } from "./prompts.ts";
 
 /** 沉淀动作集：record/query/verify，全部经 Runtime 注入 */

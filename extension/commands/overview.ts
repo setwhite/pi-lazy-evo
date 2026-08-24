@@ -3,9 +3,9 @@
  * 统计聚合由 gate.summarizeLibrary 纯函数承担，命令只做 IO → 门控 → 展示。
  */
 import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { gateLibrary, summarizeLibrary } from "../gate.ts";
-import { loadConfig } from "../config.ts";
-import { readLibrary } from "../store.ts";
+import { gateLibrary, summarizeLibrary } from "../core/gate.ts";
+import { loadConfig } from "../core/config.ts";
+import { readLibrary } from "../core/store.ts";
 import { notify } from "../tools/notify.ts";
 
 /** /memory：全库总览 */

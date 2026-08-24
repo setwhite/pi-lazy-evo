@@ -4,8 +4,8 @@
  * 待验筛选由 gate.selectPending 纯函数承担，命令只做 IO → 门控 → 注入。
  */
 import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { gateLibrary, selectPending, type PendingEntity } from "../gate.ts";
-import { readLibrary } from "../store.ts";
+import { gateLibrary, selectPending, type PendingEntity } from "../core/gate.ts";
+import { readLibrary } from "../core/store.ts";
 import type { SettlerActions } from "../agents/settler/agent.ts";
 import { notify } from "../tools/notify.ts";
 

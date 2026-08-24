@@ -4,7 +4,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseFrontmatter } from "./tools/frontmatter.ts";
+import { parseFrontmatter } from "../tools/frontmatter.ts";
 import { ensureMemoryDir, memoryDir } from "./layout.ts";
 
 /** 实体元信息 */

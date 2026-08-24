@@ -5,7 +5,7 @@
  * 自动模式（turn_end 时钟）将来复用同一份提示词，暂不实现。
  * 协议手册目录由调用方（Runtime）注入，提示词层不感知部署位置。
  */
-import { GATE_LABEL, type PendingEntity } from "../../gate.ts";
+import { GATE_LABEL, type PendingEntity } from "../../core/gate.ts";
 
 /** 沉淀提示词集：record/query/verify 三条注入指令 */
 export interface SettlerPrompts {

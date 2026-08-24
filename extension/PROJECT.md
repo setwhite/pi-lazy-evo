@@ -18,9 +18,12 @@ lazy-memory/                    ← 单一项目仓库（v1 历史保留在 git�
 ├── README.md                   项目说明（对外英文）
 ├── LICENSE                     MIT（沿用）
 ├── extension/                  扩展源码（pi 加载入口）
-│   ├── index.ts / config.ts / gate.ts
-│   ├── store.ts              存储层 barrel：透出全符号 + readLibrary 整库配对
-│   ├── entities.ts / verifications.ts / layout.ts  存储子域（实体 / 验证 / 目录骨架）
+│   ├── index.ts              pi 加载入口（保留根，自动加载点）
+│   ├── core/                 核心逻辑层（config/store/gate 域）
+│   │   ├── config.ts          配置（settings.json 挡位）
+│   │   ├── store.ts           存储 barrel：透出全符号 + readLibrary 整库配对
+│   │   ├── entities.ts / verifications.ts / layout.ts  存储子域（实体 / 验证 / 目录骨架）
+│   │   └── gate.ts            门控纯计算 + 聚合摘要
 │   ├── agents/settler/         (agent.ts + prompts.ts)
 │   ├── commands/               (5 命令)
 │   ├── tools/                  (notify.ts + frontmatter.ts 通用工具)

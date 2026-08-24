@@ -3,8 +3,8 @@
  * GRACE 容差窗口、批量门控与逐实体一致性。
  */
 import { describe, expect, it } from "bun:test";
-import { computeGate, gateLibrary, NEEDS_VERIFICATION, selectPending, summarizeLibrary, type GatedEntity } from "../gate.ts";
-import type { EntityMeta, EntityWithVerifications, VerificationRecord } from "../store.ts";
+import { computeGate, gateLibrary, NEEDS_VERIFICATION, selectPending, summarizeLibrary, type GatedEntity } from "../core/gate.ts";
+import type { EntityMeta, EntityWithVerifications, VerificationRecord } from "../core/store.ts";
 
 /** 构造实体元信息（默认 mtime 距今 1 小时前） */
 function meta(over: Partial<EntityMeta> = {}): EntityMeta {
