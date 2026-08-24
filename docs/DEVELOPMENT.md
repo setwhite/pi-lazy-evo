@@ -35,8 +35,10 @@ bunx tsc -p .tsconfig.json   # 期望零错误
   新增存储字段/子域时保持 barrel 导出入口稳定
 - `commands/` 只做"解析输入 → 调 core/agent → 通知"，不内联业务计算；
   需要聚合时优先在 gate 提纯函数（如 `summarizeLibrary` / `selectPending`）
-- `agents/settler/` 是命令执行层（动作 = 拼提示词 → dispatch）；
-  auto 自动挡不走 dispatch，另起独立子进程按协议直读——见下节
+- `agents/` 是唯一执行层：**任务定义**（actions.ts 纯数据）+ **提示词**（prompts.ts）+
+  两条**通道**（main.ts 主会话 dispatch / workers/worker.ts 子进程 spawn）。
+  手动命令与 auto 挡共用同一任务语义，新增动作只改 actions.ts 一处；
+  自动挡验证清单与手动命令同一筛选（gate.selectPending + toPending 注入）——见下节
 
 ## 数据格式约束
 
@@ -57,7 +59,7 @@ bunx tsc -p .tsconfig.json   # 期望零错误
      pi.registerCommand("memory foo", { description: "...", handler: handler });
    }
    ```
-   只做参数解析 + 通知；业务聚合提纯到 gate，执行动作复用 settler。
+   只做参数解析 + 通知；业务聚合提纯到 gate，执行任务组装到 agents/actions.ts。
 2. **注册**：在 `extension/commands/index.ts` 的 `registerMemoryCommands` 里追加调用。
 3. **测试**：在 `extension/tests/commands.test.ts` 会话桩里加用例（临时库 + pi 桩）。
 4. **文档**：在 `docs/USER.md` 补命令用法。
@@ -67,11 +69,11 @@ bunx tsc -p .tsconfig.json   # 期望零错误
 
 ## 扩展点：auto 自动模式（已实现）
 
-`hooks/auto.ts` 挂 turn_end 时钟 + token 水位，编排 `agents/workers/` 下两个子进程
-代理（memo-worker 沉淀 / verify-worker 验证）。与初稿不同，auto **不复用**
-`createSettlerActions`（那是主会话假入），而是 spawn 独立 pi 子进程（便宜模型、
-独立上下文、自带通用工具）按 `protocol/` 手册操作 `.memory/`——与手动模式同一套哲学：
-扩展不代写库，worker 是“又一个按协议执行的代理”。
+`hooks/auto.ts` 挂 turn_end 时钟 + token 水位，派发 `agents/actions.ts` 的沉淀/验证
+两个**任务**（与手动命令同一套语义）到子进程通道 `agents/workers/worker.ts`。
+与主会话通道（`agents/main.ts` dispatch）的区别只在执行载体：独立 pi 子进程
+（便宜模型、独立上下文、自带通用工具）按 `protocol/` 手册操作 `.memory/`——
+扩展不代写库，通道载体与任务语义分离。
 
 触发判定是纯函数 `decideAutoTrigger`（吸收基线 / compaction 回落 / 增量达阈值 / 防并发），
 提示词与 spawn 参数组装也是纯函数，可无 IO 单测；真实 spawn 是薄壳。

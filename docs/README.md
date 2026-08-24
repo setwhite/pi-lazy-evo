@@ -61,7 +61,7 @@ lazy-memory/
 ├── extension/               # 扩展源码（pi 加载入口）
 │   ├── index.ts             # 装配入口（保留根）
 │   ├── core/                # 核心逻辑层：config / store / gate
-│   ├── agents/              # 执行层：settler（命令）+ workers（后台沉淀/验证）
+│   ├── agents/              # 执行层：任务定义 + 提示词 + 主会话/子进程双通道
 │   ├── commands/            # 5 个 /memory 命令扳机
 │   ├── hooks/               # 自动挡：事件挂载 + 水位判定 + 编排
 │   ├── tools/               # 通用工具：TUI 通知、front-matter 解析

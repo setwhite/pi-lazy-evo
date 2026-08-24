@@ -67,6 +67,11 @@ export interface PendingEntity {
 /** 需要（重新）验证的门控状态：未证实 + 过期 */
 export const NEEDS_VERIFICATION: ReadonlySet<GateState> = new Set<GateState>(["none", "stale"]);
 
+/** 门控实体 → 待验清单项（清单注入提示词用：手动命令与自动挡共用此转换） */
+export function toPending(gated: GatedEntity[]): PendingEntity[] {
+	return gated.map(({ meta, gate }) => ({ id: meta.id, kind: meta.kind, state: gate.state }));
+}
+
 /** 待验实体摘要：overview 展示用（四态计数 + 待验实体清单） */
 export interface LibrarySummary {
 	/** 四态计数 */

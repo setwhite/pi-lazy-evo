@@ -1,14 +1,17 @@
 /**
- * auto 自动挡入口：turn_end 时钟 + token 水位判定 + 串行编排双 worker。
- * 触发判定为纯函数（decideAutoTrigger，可无 IO 单测）；worker 实现见
- * agents/workers/（memo-worker 沉淀与 verify-worker 验证），公共设施在 worker.ts。
+ * auto 自动挡：turn_end 时钟 + token 水位判定，串行派发两个后台任务（沉淀→验证）。
+ * 任务语义与手动命令同一套（agents/actions.ts），只是通道不同：
+ * 手动走主会话（agents/main.ts dispatch），自动走子进程（agents/workers spawn）。
+ * 验证清单与手动 /memory verify 同一筛选（gate.selectPending 算好注入，不靠模型自找）。
  * 防循环：水位增量触发；worker 在跑时吸收增量不重复触发；compaction 回落重设基线。
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type MemorySettings } from "../core/config.ts";
+import { gateLibrary, selectPending, toPending } from "../core/gate.ts";
+import { readLibrary } from "../core/store.ts";
 import type { Runtime } from "../index.ts";
-import { runMemoWorker } from "../agents/workers/memo-worker.ts";
-import { runVerifyWorker } from "../agents/workers/verify-worker.ts";
+import { extractTranscript, recordTask, verifyTask } from "../agents/actions.ts";
+import { runWorkerTask } from "../agents/workers/worker.ts";
 
 /** auto 触发状态机（闭包持有，非模块级全局） */
 export interface AutoState {
@@ -60,8 +63,11 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 	});
 }
 
-/** 串行执行：先沉淀、后验证 */
+/** 串行派发：先沉淀（带会话素材），后验证（算好待验清单注入） */
 async function runAutoWorker(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings): Promise<void> {
-	await runMemoWorker(runtime, ctx, config);
-	await runVerifyWorker(runtime, ctx, config);
+	const settle = recordTask(extractTranscript(ctx.sessionManager.getEntries()));
+	await runWorkerTask("沉淀", settle, runtime.protocolDir, ctx, config, config.autoMemoTools);
+	const pending = selectPending(gateLibrary(readLibrary(ctx.cwd)));
+	const verify = verifyTask(toPending(pending));
+	await runWorkerTask("验证", verify, runtime.protocolDir, ctx, config, config.autoVerifyTools);
 }

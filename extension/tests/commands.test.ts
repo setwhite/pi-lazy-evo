@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMemoryCommands } from "../commands/index.ts";
-import { createSettlerActions } from "../agents/settler/agent.ts";
-import { createPrompts } from "../agents/settler/prompts.ts";
+import { createMainRunner } from "../agents/main.ts";
+import { recordTask, queryTask, verifyTask } from "../agents/actions.ts";
 import { appendVerification, writeEntity } from "../core/store.ts";
 import { Runtime } from "../index.ts";
 
@@ -44,7 +44,7 @@ function createSession(): Session {
 		sendUserMessage: async (content: string) => void sent.push(content),
 	} as unknown as ExtensionAPI;
 	const runtime = new Runtime(pi);
-	registerMemoryCommands(pi, runtime);
+	registerMemoryCommands(pi, createMainRunner(runtime));
 	return {
 		cwd,
 		runtime,
@@ -78,7 +78,7 @@ describe("/memory record / query", () => {
 		const s = createSession();
 		await s.run("memory record", "");
 		expect(s.sent.at(-1)!).toContain("[lazy-memory]");
-		expect(s.sent.at(-1)!).toContain("settlement");
+		expect(s.sent.at(-1)!).toContain("durable conclusions");
 	});
 
 	it("query 注入带检索词的提醒", async () => {
@@ -94,7 +94,7 @@ describe("/memory verify", () => {
 		writeEntity(s.cwd, { id: "test-idea", kind: "concept", sources: "test", assertions: ["Idea."] });
 		await s.run("memory verify", "");
 		expect(s.sent.at(-1)!).toContain("test-idea");
-		expect(s.sent.at(-1)!).toContain("Manual verification requested");
+		expect(s.sent.at(-1)!).toContain("Entities pending verification");
 	});
 
 	it("已通过验证的实体不进入默认清单；指定 id 时则复验", async () => {
@@ -140,17 +140,18 @@ describe("/memory mode", () => {
 });
 
 describe("动作与提示词", () => {
-	it("SettlerActions 通过 runtime 派发协议手册指引", () => {
+	it("主会话通道经 runtime 派发协议手册指引", () => {
 		const s = createSession();
-		createSettlerActions(s.runtime).query("pi");
+		createMainRunner(s.runtime).run(recordTask());
 		expect(s.sent.at(-1)!).toContain(s.runtime.protocolDir);
 	});
 
-	it("createPrompts 构建三条完整指令", () => {
-		const s = createSession();
-		const prompts = createPrompts(join(s.cwd, "protocol"));
-		expect(prompts.record()).toContain("settlement");
-		expect(prompts.query("pi")).toContain("Search terms: pi");
-		expect(prompts.verify([{ id: "pi", kind: "tool", state: "none" }])).toContain("- pi [tool]");
+	it("三条任务指令引用各自手册且互不越界", () => {
+		const settle = recordTask();
+		expect(settle.formats).toEqual(["entities.md"]);
+		expect(settle.manuals).not.toContain("verify.md");
+		const v = verifyTask([{ id: "pi", kind: "tool", state: "none" }]);
+		expect(v.material).toContain("- pi [tool] none");
+		expect(queryTask("pi").material).toContain("Search terms: pi");
 	});
 });

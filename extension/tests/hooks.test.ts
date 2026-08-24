@@ -4,12 +4,9 @@
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
-import {
-	decideAutoTrigger,
-	INITIAL_AUTO_STATE,
-} from "../hooks/auto.ts";
-import { extractTranscript, buildMemoWorkerPrompt } from "../agents/workers/memo-worker.ts";
-import { buildVerifyWorkerPrompt } from "../agents/workers/verify-worker.ts";
+import { decideAutoTrigger, INITIAL_AUTO_STATE } from "../hooks/auto.ts";
+import { extractTranscript, recordTask, verifyTask } from "../agents/actions.ts";
+import { buildAgentPrompt, buildWorkerPrompt } from "../agents/prompts.ts";
 import { buildAutoWorkerArgs } from "../agents/workers/worker.ts";
 
 /** 收集本次用例生成的临时 worker 目录，统一清理 */
@@ -80,26 +77,36 @@ describe("extractTranscript", () => {
 	});
 });
 
-describe("worker 提示词", () => {
-	it("沉淀提示词：含 record 手册、记忆库根与素材", () => {
-		const prompt = buildMemoWorkerPrompt({ protocolDir: "/p/protocol", cwd: "/w", transcript: "hello", maxTurns: 8 });
+describe("任务与提示词", () => {
+	it("沉淀任务只含实体面：不引用验证面", () => {
+		const task = recordTask("t");
+		expect(task.formats).toEqual(["entities.md"]);
+		expect(task.formats).not.toContain("verifications.md");
+		expect(task.manuals).not.toContain("verify.md");
+	});
+
+	it("验证任务含实体面+验证面，不引用 record 手册", () => {
+		const task = verifyTask([{ id: "x", kind: "tool", state: "stale" }]);
+		expect(task.formats).toEqual(["entities.md", "verifications.md"]);
+		expect(task.manuals).toEqual(["verify.md"]);
+		expect(task.material).toContain("- x [tool] stale");
+	});
+
+	it("worker 提示词：含手册引用、素材与约束", () => {
+		const prompt = buildWorkerPrompt(recordTask("hello"), "/p/protocol", "/w", 8);
 		expect(prompt).toContain("/p/protocol/entities.md");
 		expect(prompt).toContain("/p/protocol/record.md");
 		expect(prompt).not.toContain("verifications.md");
 		expect(prompt).toContain("/w/.memory");
 		expect(prompt).toContain("hello");
-		expect(prompt).toContain("最多 8 轮");
+		expect(prompt).toContain("at most 8");
 	});
 
-	it("验证提示词：含 verify 手册与记忆库根，不带素材字段", () => {
-		const prompt = buildVerifyWorkerPrompt({ protocolDir: "/p/protocol", cwd: "/w", maxTurns: 6 });
-		expect(prompt).toContain("/p/protocol/entities.md");
-		expect(prompt).toContain("/p/protocol/verifications.md");
+	it("主会话提示词：精简无约束，含手册与素材", () => {
+		const prompt = buildAgentPrompt(verifyTask([{ id: "x", kind: "concept", state: "none" }]), "/p/protocol");
 		expect(prompt).toContain("/p/protocol/verify.md");
-		expect(prompt).not.toContain("record.md");
-		expect(prompt).toContain("/w/.memory");
-		expect(prompt).not.toContain("最近对话素材");
-		expect(prompt).toContain("最多 6 轮");
+		expect(prompt).toContain("- x [concept] none");
+		expect(prompt).not.toContain("at most");
 	});
 });
 

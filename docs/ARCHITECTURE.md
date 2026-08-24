@@ -28,11 +28,11 @@ extension/
 │   ├── layout.ts         #   目录骨架：memoryDir / ensureMemoryDir
 │   └── gate.ts           #   门控纯计算：四态 + 聚合摘要（summarize/selectPending）
 ├── agents/
-│   ├── settler/          # 执行层：命令动作 = 拼提示词 → dispatch
-│   └── workers/          # 后台 worker（子进程代理）：沉淀/验证
-│       ├── worker.ts         #   公共设施：提示词文件/spawn/单 worker 执行
-│       ├── memo-worker.ts    #   沉淀 worker：素材抽取 + 提示词
-│       └── verify-worker.ts  #   验证 worker：提示词
+│   ├── actions.ts        # 代理任务定义（纯数据）：record/query/verify
+│   ├── prompts.ts        # 提示词生成：任务 → 主会话消息 / worker 系统提示
+│   ├── main.ts           # 主会话通道：任务 → dispatch（手动命令用）
+│   └── workers/
+│       └── worker.ts     # 子进程通道：任务 → spawn 独立 pi（auto 用）
 ├── commands/             # 5 个 /memory 命令扳机
 ├── tools/                # 通用工具（无状态）：notify、frontmatter 解析
 ├── tests/                # bun:test 单元测试（按域拆分）
@@ -49,16 +49,16 @@ extension/
 | config | 配置 | settings.json 的 lazy-memory 命名空间读写（挡位 + auto 阈值/模型/轮数） |
 | store | 存储 IO | `.memory/` 读写；barrel 在 store.ts，子域在 entities/verifications/layout |
 | gate | 纯计算 | 四态门控 + 批量门控 + 聚合摘要，**不 IO** |
-| agents/settler | 执行层 | 动作 = 拼提示词 → dispatch；命令专用 |
-| agents/workers | 后台执行 | 子进程代理：沉淀（带素材）/验证（无素材），串行跑 |
-| commands | 扳机 + 展示 | 只算输入与 TUI 通知，不跑协议逻辑 |
+| agents | 执行层 | **任务定义**（actions 纯数据）+ **提示词**（prompts）+ 两条**通道**：
+| | | main（dispatch 主会话）/ workers（spawn 子进程）；手动与 auto 共用同一任务语义 |
+| commands | 扳机 + 展示 | 只算输入（含 selectPending 清单）→ runner.run(task)，不跑协议逻辑 |
 | tools | 通用工具 | 无状态：TUI 通知、front-matter 解析 |
 | tests | 单元测试 | bun:test 按域拆分，`bun test` 一键跑 |
-| hooks | 事件挂载 | turn_end 水位判定 + 串行编排双 worker，不参与命令流程 |
+| hooks | 事件挂载 | turn_end 水位判定 + 串行派发两个任务（沉淀→验证），不参与命令流程 |
 | protocol | 协议文档 | 代理执行契约，扩展不执行其语义 |
 
-**依赖方向**：`index → commands → agents/settler → core`；`tools` 与 `protocol` 被多方引用；
-`gate` 依赖 `store` 的**类型**（type-only import），不反向 IO。
+**依赖方向**：`index → commands → agents → core`；`hooks → agents → core`；
+`tools` 与 `protocol` 被多方引用；`gate` 依赖 `store` 的**类型**（type-only import），不反向 IO。
 
 ## 4. 数据模型（.memory/）
 

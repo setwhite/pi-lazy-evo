@@ -1,6 +1,6 @@
 /**
- * worker 公共设施：提示词文件写入、spawn 参数组装、子进程执行、单 worker 跑批。
- * 由双 worker（memo-worker / verify-worker）共用；各自的提示词与素材逻辑留在各自文件。
+ * 子进程通道：任务 → 提示词 → spawn 独立 pi 子进程执行（auto 挡用）。
+ * 沉淀/验证共用此通道；任务语义在 agents/actions.ts，提示词在 agents/prompts.ts。
  */
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -9,17 +9,11 @@ import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AutoModel, MemorySettings } from "../../core/config.ts";
 import { notify } from "../../tools/notify.ts";
+import type { AgentTask } from "../actions.ts";
+import { buildWorkerPrompt } from "../prompts.ts";
 
 /** worker 默认超时（毫秒）：防子进程卡死 */
 const WORKER_TIMEOUT_MS = 10 * 60_000;
-
-/** 共同尾部：记忆库根 + 约束（格式/手册引用由各 worker 提示词自含，互不越界） */
-export function promptHeader(cwd: string, maxTurns: number): string[] {
-	return [
-		`- 记忆库根目录：${cwd}/.memory（用绝对路径操作）。`,
-		`- 约束：最多 ${maxTurns} 轮精简执行；不改 .memory/ 以外的文件；结束后用一句话总结做了什么。`,
-	];
-}
 
 /** 组装子进程调用参数与提示词内容（纯函数，可测；spawn 由调用方执行） */
 export function buildAutoWorkerArgs(input: { model?: AutoModel; tools: string[]; promptContent: string }): { command: string; args: string[]; promptFile: string; promptDir: string } {
@@ -38,8 +32,9 @@ export function buildAutoWorkerArgs(input: { model?: AutoModel; tools: string[];
 	return { command: "pi", args, promptFile, promptDir };
 }
 
-/** 跑单个 worker：写提示词 → spawn → 通知结果 → 清理临时目录 */
-export async function runSingleWorker(kind: string, ctx: ExtensionContext, config: MemorySettings, tools: string[], promptContent: string): Promise<void> {
+/** 跑一个后台任务：拼提示词 → spawn → 通知结果 → 清理临时目录 */
+export async function runWorkerTask(kind: string, task: AgentTask, protocolDir: string, ctx: ExtensionContext, config: MemorySettings, tools: string[]): Promise<void> {
+	const promptContent = buildWorkerPrompt(task, protocolDir, ctx.cwd, config.autoMaxTurns);
 	const built = buildAutoWorkerArgs({ model: config.autoModel, tools, promptContent });
 	try {
 		const summary = await spawnWorker(built.command, built.args, ctx.cwd, WORKER_TIMEOUT_MS);

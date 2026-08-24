@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMemoryCommands } from "./commands/index.ts";
 import { registerAutoModeHooks } from "./hooks/auto.ts";
+import { createMainRunner } from "./agents/main.ts";
 
 /** 协议手册默认位置：与扩展源码同目录。bun 按真实路径加载（软链解析后指向仓库 extension/），
  * protocol/ 随仓库分发，安装位与仓库分离后此路径依然成立。 */
@@ -32,6 +33,6 @@ export class Runtime {
 /** 扩展工厂 */
 export default function lazyMemoryExtension(pi: ExtensionAPI): void {
 	const runtime = new Runtime(pi);
-	registerMemoryCommands(pi, runtime);
+	registerMemoryCommands(pi, createMainRunner(runtime));
 	registerAutoModeHooks(pi, runtime);
 }
