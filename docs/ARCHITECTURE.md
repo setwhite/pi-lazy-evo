@@ -32,7 +32,10 @@ extension/
 ├── tools/                # 通用工具（无状态）：notify、frontmatter 解析
 ├── tests/                # bun:test 单元测试（按域拆分）
 ├── hooks/
-│   └── auto.ts           # 自动挡：turn_end 水位触发，串行双 worker（沉淀/验证）
+│   ├── auto.ts           # 自动挡入口：turn_end 水位判定 + 串行编排
+│   ├── worker.ts         # worker 公共设施：提示词文件/spawn/单 worker 执行
+│   ├── memo-worker.ts    # 沉淀 worker：素材抽取 + 提示词
+│   └── verify-worker.ts  # 验证 worker：提示词
 └── protocol/             # 协议手册（代理执行契约）
 ```
 

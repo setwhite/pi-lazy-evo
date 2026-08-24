@@ -6,12 +6,11 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import {
 	decideAutoTrigger,
-	extractTranscript,
-	buildAutoWorkerArgs,
-	buildMemoWorkerPrompt,
-	buildVerifyWorkerPrompt,
 	INITIAL_AUTO_STATE,
 } from "../hooks/auto.ts";
+import { extractTranscript, buildMemoWorkerPrompt } from "../hooks/memo-worker.ts";
+import { buildVerifyWorkerPrompt } from "../hooks/verify-worker.ts";
+import { buildAutoWorkerArgs } from "../hooks/worker.ts";
 
 /** 收集本次用例生成的临时 worker 目录，统一清理 */
 const tempDirs: string[] = [];

@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node", "bun"]
   },
-  "include": ["index.ts", "core/config.ts", "core/store.ts", "core/entities.ts", "core/verifications.ts", "core/layout.ts", "core/gate.ts", "hooks/auto.ts", "agents/settler/agent.ts", "agents/settler/prompts.ts", "commands/index.ts", "commands/overview.ts", "commands/record.ts", "commands/query.ts", "commands/verify.ts", "commands/mode.ts", "tools/notify.ts", "tools/frontmatter.ts", "tests/store.test.ts", "tests/gate.test.ts", "tests/config.test.ts", "tests/commands.test.ts", "tests/hooks.test.ts"]
+  "include": ["index.ts", "core/config.ts", "core/store.ts", "core/entities.ts", "core/verifications.ts", "core/layout.ts", "core/gate.ts", "hooks/auto.ts", "hooks/worker.ts", "hooks/memo-worker.ts", "hooks/verify-worker.ts", "agents/settler/agent.ts", "agents/settler/prompts.ts", "commands/index.ts", "commands/overview.ts", "commands/record.ts", "commands/query.ts", "commands/verify.ts", "commands/mode.ts", "tools/notify.ts", "tools/frontmatter.ts", "tests/store.test.ts", "tests/gate.test.ts", "tests/config.test.ts", "tests/commands.test.ts", "tests/hooks.test.ts"]
 }
