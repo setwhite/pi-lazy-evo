@@ -1,13 +1,12 @@
 /**
  * /memory 总览：模式 + 四态分布 + 待验清单（TUI 展示，不注入）。
+ * 统计聚合由 gate.summarizeLibrary 纯函数承担，命令只做 IO → 门控 → 展示。
  */
 import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { NEEDS_VERIFICATION, gateLibrary, type GateState } from "../gate.ts";
+import { gateLibrary, summarizeLibrary } from "../gate.ts";
 import { loadConfig } from "../config.ts";
 import { readLibrary } from "../store.ts";
 import { notify } from "../tools/notify.ts";
-
-const ZERO_COUNTS: Record<GateState, number> = { passed: 0, failed: 0, none: 0, stale: 0 };
 
 /** /memory：全库总览 */
 async function overview(_args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -17,20 +16,13 @@ async function overview(_args: string, ctx: ExtensionCommandContext): Promise<vo
 		notify(ctx, "Memory Overview", [`Mode: ${mode}`, "Memory library is empty."]);
 		return;
 	}
-	const counts: Record<GateState, number> = { ...ZERO_COUNTS };
-	const watchlist: string[] = [];
-	for (const { meta, gate } of gated) {
-		counts[gate.state]++;
-		if (NEEDS_VERIFICATION.has(gate.state)) {
-			watchlist.push(`${meta.id} (${gate.state === "none" ? "unverified" : "stale"})`);
-		}
-	}
+	const { counts, pending } = summarizeLibrary(gated);
 	const lines = [
 		`Mode: ${mode}`,
 		`Entities ${gated.length} | passed ${counts.passed} / failed ${counts.failed} / unverified ${counts.none} / stale ${counts.stale}`,
 	];
-	if (watchlist.length) {
-		lines.push(`Needs verification (${watchlist.length}): ${watchlist.join(", ")}`);
+	if (pending.length) {
+		lines.push(`Needs verification (${pending.length}): ${pending.map(({ id, state }) => `${id} (${state === "none" ? "unverified" : "stale"})`).join(", ")}`);
 		lines.push("Run /memory verify for a batch check.");
 	}
 	notify(ctx, "Memory Overview", lines);

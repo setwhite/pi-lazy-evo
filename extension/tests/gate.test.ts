@@ -3,7 +3,7 @@
  * GRACE 容差窗口、批量门控与逐实体一致性。
  */
 import { describe, expect, it } from "bun:test";
-import { computeGate, gateLibrary, NEEDS_VERIFICATION, type GatedEntity } from "../gate.ts";
+import { computeGate, gateLibrary, NEEDS_VERIFICATION, selectPending, summarizeLibrary, type GatedEntity } from "../gate.ts";
 import type { EntityMeta, EntityWithVerifications, VerificationRecord } from "../store.ts";
 
 /** 构造实体元信息（默认 mtime 距今 1 小时前） */
@@ -84,5 +84,38 @@ describe("gateLibrary 批量门控", () => {
 describe("NEEDS_VERIFICATION", () => {
 	it("只含 none 与 stale", () => {
 		expect([...NEEDS_VERIFICATION].sort()).toEqual(["none", "stale"]);
+	});
+});
+
+describe("summarizeLibrary 全库摘要", () => {
+	it("四态计数与待验清单一次算齐", () => {
+		const items: EntityWithVerifications[] = [
+			{ meta: meta({ id: "a", mtimeMs: Date.now() - 60_000 }), verifications: [rec({ target: "entities/a.md", checkedAtMs: Date.now() })] },
+			{ meta: meta({ id: "b", mtimeMs: Date.now() - 60_000 }), verifications: [rec({ target: "entities/b.md", result: "failed", checkedAtMs: Date.now() })] },
+			{ meta: meta({ id: "c", mtimeMs: Date.now() }), verifications: [] },
+			{ meta: meta({ id: "d", mtimeMs: Date.now() }), verifications: [rec({ target: "entities/d.md", checkedAtMs: Date.now() - 10_000 })] },
+		];
+		const { counts, pending } = summarizeLibrary(gateLibrary(items));
+		expect(counts).toEqual({ passed: 1, failed: 1, none: 1, stale: 1 });
+		expect(pending.map((p) => p.id)).toEqual(["c", "d"]);
+	});
+});
+
+describe("selectPending 待验选取", () => {
+	it("未指定 id 时只挑 unverified/stale，且保持原顺序", () => {
+		const items: EntityWithVerifications[] = [
+			{ meta: meta({ id: "a", mtimeMs: Date.now() - 60_000 }), verifications: [rec({ target: "entities/a.md", checkedAtMs: Date.now() })] },
+			{ meta: meta({ id: "b", mtimeMs: Date.now() }), verifications: [] },
+		];
+		expect(selectPending(gateLibrary(items)).map((g) => g.meta.id)).toEqual(["b"]);
+	});
+
+	it("指定 id 时全量复验（含 passed），找不到返回空", () => {
+		const items: EntityWithVerifications[] = [
+			{ meta: meta({ id: "a", mtimeMs: Date.now() - 60_000 }), verifications: [rec({ target: "entities/a.md", checkedAtMs: Date.now() })] },
+			{ meta: meta({ id: "b", mtimeMs: Date.now() }), verifications: [] },
+		];
+		expect(selectPending(gateLibrary(items), "a").map((g) => g.meta.id)).toEqual(["a"]);
+		expect(selectPending(gateLibrary(items), "ghost")).toHaveLength(0);
 	});
 });

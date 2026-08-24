@@ -1,9 +1,10 @@
 /**
  * /memory verify 验证扳机：算出待验清单（unverified/stale），
  * 注入提醒让 agent 亲自验证（扩展不跑任何检查）。
+ * 待验筛选由 gate.selectPending 纯函数承担，命令只做 IO → 门控 → 注入。
  */
 import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { NEEDS_VERIFICATION, gateLibrary, type PendingEntity } from "../gate.ts";
+import { gateLibrary, selectPending, type PendingEntity } from "../gate.ts";
 import { readLibrary } from "../store.ts";
 import type { SettlerActions } from "../agents/settler/agent.ts";
 import { notify } from "../tools/notify.ts";
@@ -12,8 +13,8 @@ import { notify } from "../tools/notify.ts";
 async function verify(args: string, ctx: ExtensionCommandContext, actions: SettlerActions): Promise<void> {
 	const targetId = args.trim();
 	const all = gateLibrary(readLibrary(ctx.cwd));
-	const selected = targetId ? all.filter((g) => g.meta.id === targetId) : all;
-	if (targetId && !selected.length) {
+	const pending = selectPending(all, targetId);
+	if (targetId && !pending.length) {
 		notify(ctx, "Memory Verify", [`Entity not found: ${targetId}`]);
 		return;
 	}
@@ -21,8 +22,6 @@ async function verify(args: string, ctx: ExtensionCommandContext, actions: Settl
 		notify(ctx, "Memory Verify", ["Memory library is empty."]);
 		return;
 	}
-	// 指定 id 时复验其当前状态（含 passed/failed）；未指定时只挑待验（unverified/stale）
-	const pending = targetId ? selected : selected.filter((g) => NEEDS_VERIFICATION.has(g.gate.state));
 	if (!pending.length) {
 		notify(ctx, "Memory Verify", ["No entity needs verification."]);
 		return;

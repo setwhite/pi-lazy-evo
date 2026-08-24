@@ -67,6 +67,31 @@ export interface PendingEntity {
 /** 需要（重新）验证的门控状态：未证实 + 过期 */
 export const NEEDS_VERIFICATION: ReadonlySet<GateState> = new Set<GateState>(["none", "stale"]);
 
+/** 待验实体摘要：overview 展示用（四态计数 + 待验实体清单） */
+export interface LibrarySummary {
+	/** 四态计数 */
+	counts: Record<GateState, number>;
+	/** 需要验证的实体（unverified/stale）及其状态 */
+	pending: { id: string; state: GateState }[];
+}
+
+/** 全库统计摘要：一次性攒齐四态计数与待验清单（纯计算，供 /memory overview 展示） */
+export function summarizeLibrary(gated: GatedEntity[]): LibrarySummary {
+	const counts: Record<GateState, number> = { passed: 0, failed: 0, none: 0, stale: 0 };
+	const pending: { id: string; state: GateState }[] = [];
+	for (const { meta, gate } of gated) {
+		counts[gate.state]++;
+		if (NEEDS_VERIFICATION.has(gate.state)) pending.push({ id: meta.id, state: gate.state });
+	}
+	return { counts, pending };
+}
+
+/** 待验实体选取：指定 id 时全量复验该实体（含 passed/failed）；未指定时只挑 unverified/stale */
+export function selectPending(gated: GatedEntity[], targetId?: string): GatedEntity[] {
+	if (!targetId) return gated.filter((g) => NEEDS_VERIFICATION.has(g.gate.state));
+	return gated.filter((g) => g.meta.id === targetId);
+}
+
 /** 批量门控：整库实体 → 门控结果（纯计算，不 IO） */
 export function gateLibrary(items: EntityWithVerifications[]): GatedEntity[] {
 	return items.map(({ meta, verifications }) => ({ meta, gate: computeGate(meta, verifications) }));
