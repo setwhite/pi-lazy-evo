@@ -2,8 +2,8 @@
  * 验证 worker：不带素材，按 entities.md（读实体用）+ verifications.md（记录/验证器/门控）+ verify.md 核对。
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { MemorySettings } from "../core/config.ts";
-import type { Runtime } from "../index.ts";
+import type { MemorySettings } from "../../core/config.ts";
+import type { Runtime } from "../../index.ts";
 import { promptHeader, runSingleWorker } from "./worker.ts";
 
 /** 验证 worker 提示词：只做验证（verify），读实体面 + 验证面 */

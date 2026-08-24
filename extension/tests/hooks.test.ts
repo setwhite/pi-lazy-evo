@@ -1,5 +1,5 @@
 /**
- * hooks/auto 单元测试：只测纯函数（触发判定 / 素材抽取 / 提示词与参数组装），
+ * auto 自动挡单元测试：只测纯函数（触发判定 / 素材抽取 / 提示词与参数组装），
  * 不真正 spawn pi 子进程。覆盖四态判定、compaction 回落、防并发、模型参数。
  */
 import { afterEach, describe, expect, it } from "bun:test";
@@ -8,9 +8,9 @@ import {
 	decideAutoTrigger,
 	INITIAL_AUTO_STATE,
 } from "../hooks/auto.ts";
-import { extractTranscript, buildMemoWorkerPrompt } from "../hooks/memo-worker.ts";
-import { buildVerifyWorkerPrompt } from "../hooks/verify-worker.ts";
-import { buildAutoWorkerArgs } from "../hooks/worker.ts";
+import { extractTranscript, buildMemoWorkerPrompt } from "../agents/workers/memo-worker.ts";
+import { buildVerifyWorkerPrompt } from "../agents/workers/verify-worker.ts";
+import { buildAutoWorkerArgs } from "../agents/workers/worker.ts";
 
 /** 收集本次用例生成的临时 worker 目录，统一清理 */
 const tempDirs: string[] = [];

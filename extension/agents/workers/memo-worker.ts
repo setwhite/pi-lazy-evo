@@ -3,8 +3,8 @@
  * 只读实体面（entities.md）——从不触碰验证面（verifications.md）。
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { MemorySettings } from "../core/config.ts";
-import type { Runtime } from "../index.ts";
+import type { MemorySettings } from "../../core/config.ts";
+import type { Runtime } from "../../index.ts";
 import { promptHeader, runSingleWorker } from "./worker.ts";
 
 /** 喂给沉淀 worker 的最近会话条目上限 */

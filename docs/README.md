@@ -61,12 +61,12 @@ lazy-memory/
 ├── extension/               # 扩展源码（pi 加载入口）
 │   ├── index.ts             # 装配入口（保留根）
 │   ├── core/                # 核心逻辑层：config / store / gate
+│   ├── agents/              # 执行层：settler（命令）+ workers（后台沉淀/验证）
 │   ├── commands/            # 5 个 /memory 命令扳机
-│   ├── agents/settler/      # 命令执行层：拼提示词 → dispatch
+│   ├── hooks/               # 自动挡：事件挂载 + 水位判定 + 编排
 │   ├── tools/               # 通用工具：TUI 通知、front-matter 解析
 │   ├── tests/               # bun:test 单元测试（按域拆分）
-│   ├── protocol/            # 协议手册：entities/verifications 格式 + record/query/verify 手册
-│   └── hooks/               # 自动挡：turn_end 水位触发双 worker（沉淀/验证）
+│   └── protocol/            # 协议手册：entities/verifications 格式 + record/query/verify 手册
 └── .memory/                 # 运行时记忆库（不入库）
 ```
 

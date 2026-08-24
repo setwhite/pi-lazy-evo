@@ -1,14 +1,14 @@
 /**
  * auto 自动挡入口：turn_end 时钟 + token 水位判定 + 串行编排双 worker。
  * 触发判定为纯函数（decideAutoTrigger，可无 IO 单测）；worker 实现见
- * memo-worker.ts（沉淀）与 verify-worker.ts（验证），公共设施见 worker.ts。
+ * agents/workers/（memo-worker 沉淀与 verify-worker 验证），公共设施在 worker.ts。
  * 防循环：水位增量触发；worker 在跑时吸收增量不重复触发；compaction 回落重设基线。
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type MemorySettings } from "../core/config.ts";
 import type { Runtime } from "../index.ts";
-import { runMemoWorker } from "./memo-worker.ts";
-import { runVerifyWorker } from "./verify-worker.ts";
+import { runMemoWorker } from "../agents/workers/memo-worker.ts";
+import { runVerifyWorker } from "../agents/workers/verify-worker.ts";
 
 /** auto 触发状态机（闭包持有，非模块级全局） */
 export interface AutoState {

@@ -7,8 +7,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AutoModel, MemorySettings } from "../core/config.ts";
-import { notify } from "../tools/notify.ts";
+import type { AutoModel, MemorySettings } from "../../core/config.ts";
+import { notify } from "../../tools/notify.ts";
 
 /** worker 默认超时（毫秒）：防子进程卡死 */
 const WORKER_TIMEOUT_MS = 10 * 60_000;
