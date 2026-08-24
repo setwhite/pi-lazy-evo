@@ -97,6 +97,18 @@ describe("appendVerification / listVerifications", () => {
 		writeFileSync(join(mem, "verifications", "2026-01-01-bad.md"), "---\ntarget: entities/bad.md\nresult: weird\nevidence: x\n---\n");
 		expect(listVerifications(cwd, "bad")).toHaveLength(0);
 	});
+
+	it("target 带 .memory/ 前缀的旧记录被丢弃（精确匹配 entities/<id>.md）", () => {
+		ensureMemoryDir(cwd);
+		writeFileSync(join(mem, "verifications", "2026-01-01-old.md"), "---\ntarget: .memory/entities/old.md\nchecked_at: " + new Date().toISOString() + "\nresult: passed\nevidence: x\n---\n");
+		expect(listVerifications(cwd, "old")).toHaveLength(0);
+	});
+
+	it("checked_at 非完整 ISO（纯日期）的记录被丢弃", () => {
+		ensureMemoryDir(cwd);
+		writeFileSync(join(mem, "verifications", "2026-01-01-pure-date.md"), "---\ntarget: entities/pure-date.md\nchecked_at: 2026-01-01\nresult: passed\nevidence: x\n---\n");
+		expect(listVerifications(cwd, "pure-date")).toHaveLength(0);
+	});
 });
 
 describe("readLibrary", () => {
@@ -111,6 +123,14 @@ describe("readLibrary", () => {
 		const b = library.find((e) => e.meta.id === "b")!;
 		expect(a.verifications).toHaveLength(2);
 		expect(b.verifications).toHaveLength(0);
+	});
+
+	it("无合法 front-matter 的损坏实体不入库", () => {
+		ensureMemoryDir(cwd);
+		writeFileSync(join(mem, "entities", "broken.md"), "no front-matter at all");
+		const library = readLibrary(cwd);
+		expect(library).toHaveLength(0);
+		expect(readEntity(cwd, "broken")).toBeNull();
 	});
 });
 

@@ -50,23 +50,18 @@ export function validateKind(kind: string): string | null {
 	return null;
 }
 
-/** 列出全部实体（按文件名排序；内部：readEntity/readLibrary 共用） */
+/** 列出全部实体（按文件名排序；仅收录 front-matter 合法的实体，损坏文件不入库；内部：readEntity/readLibrary 共用） */
 export function listEntities(cwd: string): EntityMeta[] {
 	const dir = join(memoryDir(cwd), "entities");
 	if (!existsSync(dir)) return [];
 	return readdirSync(dir)
 		.filter((f) => f.endsWith(".md"))
 		.sort()
-		.map((f) => {
+		.flatMap((f) => {
 			const p = join(dir, f);
 			const meta = parseEntityMeta(p);
-			return {
-				id: meta?.id ?? f.slice(0, -3),
-				path: p,
-				kind: meta?.kind ?? "unknown",
-				sources: meta?.sources ?? "",
-				mtimeMs: statSync(p).mtimeMs,
-			};
+			if (!meta?.id || !meta.kind) return [];
+			return [{ id: meta.id, kind: meta.kind, sources: meta.sources, path: p, mtimeMs: statSync(p).mtimeMs }];
 		});
 }
 

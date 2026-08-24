@@ -21,6 +21,8 @@ The operation manuals (record.md / query.md / verify.md) reference this file; re
 | kind | tool / person / project / concept / decision | type |
 | sources | URL / local path / conversation reference | attribution |
 
+Files that do not conform to this format (malformed or missing front-matter, or missing id/kind) are ignored by the extension.
+
 Body rules:
 
 - One independently verifiable assertion per sentence, written with concrete words (grep-able), no pronouns.
@@ -39,6 +41,8 @@ When the same entity gets multiple records on the same day, the filename gets a 
 | checked_at | ISO timestamp |
 | result | passed / failed |
 | evidence | verifiable basis |
+
+Records that do not conform (non-entities/<id>.md target, invalid result, or non-ISO `checked_at`) are ignored by the extension.
 
 ## Verifiers (v2: layered abstraction as a verifier set)
 

@@ -19,7 +19,7 @@ export interface VerificationRecord {
 	checkedAtMs: number;
 }
 
-/** 列出验证记录；可指定实体 id 过滤（target 兼容带/不带 .memory/ 前缀） */
+/** 列出验证记录；可指定实体 id 过滤（target 精确等于 entities/<id>.md） */
 export function listVerifications(cwd: string, entityId?: string): VerificationRecord[] {
 	const dir = join(memoryDir(cwd), "verifications");
 	if (!existsSync(dir)) return [];
@@ -33,7 +33,7 @@ export function listVerifications(cwd: string, entityId?: string): VerificationR
 		});
 }
 
-/** 解析单个验证记录文件；target 不匹配过滤条件时返回 null */
+/** 解析单个验证记录文件；target 不匹配过滤条件、或无法定时刻时返回 null */
 function parseVerification(path: string, targetSuffix: string | null): VerificationRecord | null {
 	let raw: string;
 	try {
@@ -44,9 +44,11 @@ function parseVerification(path: string, targetSuffix: string | null): Verificat
 	const fm = parseFrontmatter(raw);
 	if (!fm) return null;
 	const target = String(fm.target ?? "");
-	if (targetSuffix && !target.endsWith(targetSuffix)) return null;
+	if (targetSuffix && target !== targetSuffix) return null;
 	if (fm.result !== "passed" && fm.result !== "failed") return null;
 	const checkedAt = String(fm.checked_at ?? "");
+	const checkedAtMs = parseCheckedAt(checkedAt);
+	if (checkedAtMs <= 0) return null; // 无法定时刻即无效记录，不参与门控
 	return {
 		path,
 		target,
@@ -54,18 +56,15 @@ function parseVerification(path: string, targetSuffix: string | null): Verificat
 		checkedAt,
 		result: fm.result,
 		evidence: String(fm.evidence ?? ""),
-		checkedAtMs: parseCheckedAt(checkedAt),
+		checkedAtMs,
 	};
 }
 
-/** checked_at 解析：带时刻按 ISO 解析；仅日期（旧记录）按本地当日最后一刻解释 */
+/** checked_at 解析：仅接受完整 ISO 时间戳（含时刻）；其余一律无法定时刻返回 0 */
 function parseCheckedAt(checkedAt: string): number {
-	if (checkedAt.includes("T")) {
-		const ms = Date.parse(checkedAt);
-		return Number.isNaN(ms) ? 0 : ms;
-	}
-	const dateMs = new Date(checkedAt.slice(0, 10) + "T23:59:59.999").getTime();
-	return Number.isNaN(dateMs) ? 0 : dateMs;
+	if (!checkedAt.includes("T")) return 0;
+	const ms = Date.parse(checkedAt);
+	return Number.isNaN(ms) ? 0 : ms;
 }
 
 /** 追加验证记录（只追加；同日多条自动加序号后缀） */
