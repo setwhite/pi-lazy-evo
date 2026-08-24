@@ -1,6 +1,6 @@
 # Memory Library Protocol — Retrieval (Query)
 
-Triggered by `/memory query [terms]`. Read this manual and schema.md before searching `.memory/entities/`.
+Triggered by `/memory query [terms]`. Read this manual, entities.md and verifications.md before searching `.memory/entities/`.
 
 ## Retrieval (semantic grep, executed by the agent)
 
@@ -17,4 +17,4 @@ Constraints: cite entity ids when answering from memory (traceable); no vectors,
 
 ## Reporting format
 
-For each hit, report: entity id, kind, gate state (see schema.md), and the relevant assertions. Cite entity ids when answering from memory; state clearly when there is no record.
+For each hit, report: entity id, kind, gate state (see verifications.md), and the relevant assertions. Cite entity ids when answering from memory; state clearly when there is no record.

@@ -1,13 +1,13 @@
 # Memory Library Protocol — Verification
 
-Triggered by `/memory verify [id]` for all entities pending verification (unverified / stale), or the specified id. Read this manual and schema.md before appending any record.
+Triggered by `/memory verify [id]` for all entities pending verification (unverified / stale), or the specified id. Read this manual, entities.md and verifications.md before appending any record.
 
 ## Enforcement
 
 - The extension provides no verifier execution and no tools: all judgment is the agent's (and the user's).
 - Evidence is required on every record; append `passed` only when you actually verified, otherwise append `failed` with the reason.
 - Each verification of an entity is a new append — never touch an existing record.
-- Recording format, verifier semantics and the timestamp rule live in schema.md.
+- Recording format, verifier semantics and the timestamp rule live in verifications.md; entity file format lives in entities.md.
 
 ## Correcting a failed fact
 

@@ -84,7 +84,9 @@ describe("extractTranscript", () => {
 describe("worker 提示词", () => {
 	it("沉淀提示词：含 record 手册、记忆库根与素材", () => {
 		const prompt = buildMemoWorkerPrompt({ protocolDir: "/p/protocol", cwd: "/w", transcript: "hello", maxTurns: 8 });
+		expect(prompt).toContain("/p/protocol/entities.md");
 		expect(prompt).toContain("/p/protocol/record.md");
+		expect(prompt).not.toContain("verifications.md");
 		expect(prompt).toContain("/w/.memory");
 		expect(prompt).toContain("hello");
 		expect(prompt).toContain("最多 8 轮");
@@ -92,7 +94,10 @@ describe("worker 提示词", () => {
 
 	it("验证提示词：含 verify 手册与记忆库根，不带素材字段", () => {
 		const prompt = buildVerifyWorkerPrompt({ protocolDir: "/p/protocol", cwd: "/w", maxTurns: 6 });
+		expect(prompt).toContain("/p/protocol/entities.md");
+		expect(prompt).toContain("/p/protocol/verifications.md");
 		expect(prompt).toContain("/p/protocol/verify.md");
+		expect(prompt).not.toContain("record.md");
 		expect(prompt).toContain("/w/.memory");
 		expect(prompt).not.toContain("最近对话素材");
 		expect(prompt).toContain("最多 6 轮");

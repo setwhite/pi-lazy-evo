@@ -6,7 +6,8 @@
 
 **.memory 实体记忆库的治理协议 + pi 扩展**：
 
-- **协议**（`extension/protocol/`）：schema.md 共享规则 + record/query/verify 三份操作手册，是代理执行任务的契约；
+- **协议**（`extension/protocol/`）：entities.md + verifications.md 两份领域格式
+  （按 worker 职责拆分，各自只读需要的）+ record/query/verify 三份操作手册，是代理执行任务的契约；
 - **扩展**（TypeScript）：命令扳机（`/memory` 族）、门控计算、挡位状态、自动挡 worker；
 - **哲学**：零工具注入——扩展只做"扳机 / 门控 / 协议"，**读写与验证全部由代理按协议手册执行**。
 

@@ -65,7 +65,7 @@ lazy-memory/
 │   ├── agents/settler/      # 命令执行层：拼提示词 → dispatch
 │   ├── tools/               # 通用工具：TUI 通知、front-matter 解析
 │   ├── tests/               # bun:test 单元测试（按域拆分）
-│   ├── protocol/            # 协议手册：schema + record/query/verify
+│   ├── protocol/            # 协议手册：entities/verifications 格式 + record/query/verify 手册
 │   └── hooks/               # 自动挡：turn_end 水位触发双 worker（沉淀/验证）
 └── .memory/                 # 运行时记忆库（不入库）
 ```

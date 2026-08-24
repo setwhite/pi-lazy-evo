@@ -83,36 +83,35 @@ function messageText(content: unknown): string {
 	return "";
 }
 
-/** 共同头部：协议手册指引 + 记忆库根 + 约束 */
-function promptHeader(protocolDir: string, cwd: string, maxTurns: number): string[] {
+/** 共同尾部：记忆库根 + 约束（格式文件/操作手册引用由各 worker 提示词自含，互不越界） */
+function promptHeader(cwd: string, maxTurns: number): string[] {
 	return [
-		`- 协议手册：先读 ${protocolDir}/schema.md，再按对应操作手册执行。`,
 		`- 记忆库根目录：${cwd}/.memory（用绝对路径操作）。`,
 		`- 约束：最多 ${maxTurns} 轮精简执行；不改 .memory/ 以外的文件；结束后用一句话总结做了什么。`,
 	];
 }
 
-/** 沉淀 worker 提示词：只做提炼（record），带会话素材 */
+/** 沉淀 worker 提示词：只做提炼（record），带会话素材，只需实体面 */
 export function buildMemoWorkerPrompt(input: { protocolDir: string; cwd: string; transcript: string; maxTurns: number }): string {
 	return [
 		"你是 lazy-memory 的后台记忆沉淀代理，任务是在 headless 环境里操作 .memory/ 记忆库。",
-		`- 操作手册：${input.protocolDir}/record.md；实体/验证格式见 ${input.protocolDir}/schema.md。`,
+		`- 协议手册：先读 ${input.protocolDir}/entities.md（实体格式），再按 ${input.protocolDir}/record.md 执行。`,
 		"- 任务：从下面给的最近对话素材里提炼长期稳定事实；用 grep 对照 .memory/entities/ 已有实体判定新增/更新；sources 追加用 ； 分隔不重复。只写值得日后引用的结论。",
-		...promptHeader(input.protocolDir, input.cwd, input.maxTurns),
+		...promptHeader(input.cwd, input.maxTurns),
 		"",
 		"=== 最近对话素材（供沉淀提炼）===",
 		input.transcript || "（无可用素材）",
 	].join("\n");
 }
 
-/** 验证 worker 提示词：只做验证（verify），不带素材 */
+/** 验证 worker 提示词：只做验证（verify），不带素材，读实体面 + 验证面 */
 export function buildVerifyWorkerPrompt(input: { protocolDir: string; cwd: string; maxTurns: number }): string {
 	return [
 		"你是 lazy-memory 的后台验证代理，任务是在 headless 环境里操作 .memory/ 记忆库。",
-		`- 操作手册：${input.protocolDir}/verify.md；实体/验证格式见 ${input.protocolDir}/schema.md。`,
+		`- 协议手册：先读 ${input.protocolDir}/entities.md（读实体用）与 ${input.protocolDir}/verifications.md（验证记录/验证器/门控），再按 ${input.protocolDir}/verify.md 执行。`,
 		"- 任务：找出 .memory/ 里 unverified 或 stale 的实体（无验证记录、或正文自上次验证后被修改），逐条核对并按协议追加验证记录（evidence 必填，只追加不覆盖）。",
 		"- 涉及时效性/外部可查事实时，可用联网检索做 web-research 验证（若工具可用）；本地可核对的用 format/conflict/local-evidence。",
-		...promptHeader(input.protocolDir, input.cwd, input.maxTurns),
+		...promptHeader(input.cwd, input.maxTurns),
 	].join("\n");
 }
 

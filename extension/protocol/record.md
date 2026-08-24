@@ -1,6 +1,6 @@
 # Memory Library Protocol — Record (Settle)
 
-Triggered by `/memory record`. Read this manual and schema.md before writing anything into `.memory/`.
+Triggered by `/memory record`. Read this manual and entities.md before writing anything into `.memory/`.
 
 ## Principles
 
@@ -9,9 +9,9 @@ Triggered by `/memory record`. Read this manual and schema.md before writing any
 
 ## Writing (create / update)
 
-- Create: write `entities/<id>.md` for a new entity; validate id and kind first (see schema.md).
+- Create: write `entities/<id>.md` for a new entity; validate id and kind first (see entities.md).
 - Update: rewrite the body with the new assertions; append new origins to `sources` separated by `；`, never duplicating an origin already present.
-- Updating a body deletes no verification records — the timestamp rule (see schema.md) automatically downgrades the entity to `stale (re-verify)`.
+- Updating a body deletes no verification records — the timestamp rule automatically downgrades the entity to `stale (re-verify)`.
 - Changing an id means creating a new entity; do not rename files.
 
 ## Boundary with verification records

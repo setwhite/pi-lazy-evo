@@ -121,7 +121,8 @@ auto 会串行启动两个独立 worker：先**沉淀**（取最近对话提炼�
 
 代理执行任务时读 `extension/protocol/` 下的英文手册（扩展不注入任何工具）：
 
-- `schema.md`：共享规则（目录/字段/验证记录/门控/严格性）——一切格式的唯一真相源
+- `entities.md`：实体格式（front-matter 三字段/正文规则/严格性）——沉淀与验证都要读的实体面
+- `verifications.md`：验证记录/验证器/门控四态——只有验证流程读的验证面
 - `record.md`：沉淀流程（写入/更新/与验证库的边界/提交约定 `memory:` scope）
 - `query.md`：检索流程（语义 grep、多轮补漏、报告格式）
 - `verify.md`：验证流程（evidence 必填、只追加、修正失效事实）
