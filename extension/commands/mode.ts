@@ -17,7 +17,9 @@ async function mode(args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const ok = setMode(ctx.cwd, wanted);
 	notify(ctx, "Memory Mode", [
 		`Mode ${ok ? "switched to" : "failed to switch to"} ${wanted}.`,
-		wanted === "auto" ? "Auto trigger is not implemented yet; mode is recorded as state only." : "Manual mode: commands are the only triggers.",
+		wanted === "auto"
+			? "Auto mode: background cheap-model worker settles & verifies memory at the token watermark (settings: autoWatermarkTokens / autoModel)."
+			: "Manual mode: commands are the only triggers.",
 	]);
 }
 
