@@ -81,7 +81,7 @@ lazy-memory 通过 5 个 `/memory` 命令和一套协议手册工作。命令负
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `autoWatermarkTokens` | 50000 | 会话新增 token 达此值触发一次自动沉淀，越小越勤 |
+| `autoWatermarkTokens` | 64000 | 会话新增 token 达此值触发一次自动沉淀，越小越勤 |
 | `autoModel.provider` / `.id` | （无） | 后台便宜模型（如 `openrouter`/`gpt-4o-mini`），缺省用主会话模型 |
 | `autoModel.thinking` | `low` | 便宜模型的思考档（off/low/medium…） |
 | `autoMaxTurns` | 12 | 单个 worker 轮数上限（成本保护） |

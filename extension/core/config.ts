@@ -36,8 +36,8 @@ export interface MemorySettings {
 	autoModel?: AutoModel;
 }
 
-/** 默认配置：手动挡；触发器 5 万 token；worker 上限 12 轮 */
-const DEFAULTS: MemorySettings = { mode: "manual", autoWatermarkTokens: 50_000, autoMaxTurns: 12 };
+/** 默认配置：手动挡；触发器 64k token；worker 上限 12 轮 */
+const DEFAULTS: MemorySettings = { mode: "manual", autoWatermarkTokens: 64_000, autoMaxTurns: 12 };
 
 /** 解析正整数：非有限正整数返回 undefined（非法忽略） */
 function positiveInt(value: unknown): number | undefined {

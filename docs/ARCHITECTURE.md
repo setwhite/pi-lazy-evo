@@ -134,7 +134,7 @@ front-matter 五字段：
 ## 7. 扩展点
 
 - **auto 自动模式**（已实现）：`hooks/auto.ts` 挂 turn_end 时钟，`getContextUsage` 取累计
-  token，增量达 `autoWatermarkTokens`（默认 50k）时，串行 spawn 两个独立 pi 子进程：
+  token，增量达 `autoWatermarkTokens`（默认 64k）时，串行 spawn 两个独立 pi 子进程：
   - **沉淀 worker**：喂最近会话素材，按 `record.md` 提炼实体；
   - **验证 worker**：不带素材，按 `verify.md` 核对 unverified/stale 实体；
   - 模型用 `autoModel`（便宜模型，缺省回退主会话模型），轮数上限 `autoMaxTurns` 写进提示词；
