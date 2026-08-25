@@ -4,32 +4,31 @@
 
 > 你没有存记忆的意识，就不会有记忆。
 
-为 AI 编码代理（pi 等支持扩展的 CLI 工具）提供被动记忆：
-人触发写入、grep 语义检索、验证驱动失效。扩展只做命令扳机与门控计算，
-读写验证由代理按协议手册执行（零工具注入）。
+为 pi 等支持扩展的编码代理提供被动记忆。扩展只做命令扳机与门控计算，
+读写与验证由代理按协议手册执行（零工具注入）。
 
 ```bash
-/memory            # 总览：挡位 + 四态分布 + 待验清单
-/memory record     # 沉淀：代理把近期结论写入 .memory/
-/memory query      # 检索：代理 grep 记忆库（可带关键词）
-/memory verify     # 验证：算出待验清单，代理逐条核对
-/memory mode       # 挡位：manual / auto（auto 未实现）
+/memory            # 帮助
+/memory overview   # 总览：挡位 + 四态分布 + 待验清单
+/memory record     # 让代理把长期结论写入 .memory/（可带附注）
+/memory query      # 让代理 grep 检索记忆库（可带关键词）
+/memory verify     # 让代理核对待验实体
+/memory mode       # manual / auto 挡位
 ```
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [docs/README.md](docs/README.md) | 总览、快速上手、目录结构 |
+| [docs/USER.md](docs/USER.md) | 用户指南：命令用法、auto 配置、门控状态 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计：分层、数据模型、设计决策 |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发指南：测试、编码约定、如何新增命令 |
-| [docs/USER.md](docs/USER.md) | 用户指南：5 个 `/memory` 命令完整用法 |
-| [extension/protocol/](extension/protocol/schema.md) | 协议手册（代理执行契约，英文） |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发指南：测试、编码约定、新增子命令 |
+
+代理执行契约在 [extension/protocol/](extension/protocol/entities.md)（中文手册，唯一真相源）。
 
 ## 安装
 
-待发布（见 docs/ARCHITECTURE.md 发布待办）。目标形态：软链
-`~/.pi/extensions/lazy-memory` → 本仓库 `extension/`。
+软链 `~/.pi/agent/extensions/lazy-memory` → 本仓库 `extension/`，pi 自动加载。
 
 ## License
 
