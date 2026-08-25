@@ -1,20 +1,21 @@
-# Memory Library Protocol — Verification
+# 记忆库协议 — 验证
 
-Triggered by `/memory verify [id]` for all entities pending verification (unverified / stale), or the specified id. Read this manual, entities.md and verifications.md before appending any record.
+由 `/memory verify [id]` 触发：不接 id 时验证全部待验实体（unverified / stale），接 id 时验证该实体。
+追加任何记录前，请先读本手册、entities.md 与 verifications.md。
 
-## Enforcement
+## 执行纪律
 
-- The extension provides no verifier execution and no tools: all judgment is the agent's (and the user's).
-- Evidence is required on every record; append `passed` only when you actually verified, otherwise append `failed` with the reason.
-- Each verification of an entity is a new append — never touch an existing record.
-- Recording format, verifier semantics and the timestamp rule live in verifications.md; entity file format lives in entities.md.
+- 扩展不提供验证器执行，也不注入任何工具：一切判断由代理（与用户）完成。
+- 每条记录都必须带证据——证据写在记录正文（见 verifications.md）。实际核对过才追加 passed，否则追加 failed 并在正文写明原因。
+- 每次验证一个实体都是追加一条新记录——绝不碰已有记录。
+- 记录格式、验证器语义与时间戳规则见 verifications.md；实体文件格式见 entities.md。
 
-## Correcting a failed fact
+## 修正失效事实
 
-1. Do not edit the entity body (auditable); if the body genuinely needs an update, follow the update flow and accept the "stale" state.
-2. Append a failed record with the overturning basis in evidence (source, command output, user's exact words).
-3. If the fact still has value, create a new entity; gating automatically excludes the old one.
+1. 不要改实体正文（保持可审计）；正文确实需要更新时，走更新流程，接受"stale"状态。
+2. 追加一条 failed 记录，把推翻依据写进记录正文（来源、命令输出、用户的原话）。
+3. 若事实仍有价值，新建实体；门控自动排除旧实体。
 
-## Commits
+## Git
 
-`.memory/` lives inside the git repository: verification changes are natively revertable and traceable. Commit messages follow Conventional Commits with the `memory:` scope (documentation type).
+`.memory/` 是个人运行时数据，不随仓库分发（gitignore）。绝不提交验证记录变更。

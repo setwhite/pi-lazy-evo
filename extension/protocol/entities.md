@@ -1,29 +1,32 @@
-# Memory Library Protocol — Entities
+# 记忆库协议 — 实体
 
-Entity files live in `.memory/entities/`, one `<id>.md` per entity. Read this file together with the operation manual before operating on `.memory/entities/`.
+实体文件位于 `.memory/entities/`，每个 `<id>.md` 一张实体。操作 `.memory/entities/` 前请先读本手册。
 
-## Library layout (shared)
+## 库结构（通用）
 
 ```
 .memory/
-├── entities/          # entities: one <id>.md per entity
-└── verifications/     # verification: one <date>-<id>.md per record (same-day duplicates get -2, -3…)
+├── entities/          # 实体：每个 <id>.md 一张
+└── verifications/     # 验证：每条记录 <日期>-<id>.md（同日重复自动加 -2、-3…）
 ```
 
-## Entity file format
+目录骨架由扩展预建。直接读写文件即可，不要创建目录。
 
-The filename is the id (lowercase-hyphen). Front-matter has exactly three fields:
+## 实体文件格式
 
-| Field | Value | Notes |
+文件名即 id：任意非空单行文本（不含换行/制表符与路径分隔符），既是文件名也是唯一标识。front-matter 恰好三个字段：
+
+| 字段 | 取值 | 说明 |
 |---|---|---|
-| id | matches filename | unique identifier |
-| kind | tool / person / project / concept / decision | type |
-| sources | URL / local path / conversation reference | attribution |
+| id | 与文件名一致 | 唯一标识 |
+| kind | tool / person / project / concept / decision | 类型 |
+| sources | URL / 本地路径 / 会话引用 | 出处 |
 
-Files that do not conform to this format (malformed or missing front-matter, or missing id/kind) are ignored by the extension.
+格式不合规的文件（front-matter 缺失或损坏、缺 id/kind）会被扩展忽略。
 
-Body rules:
+## 正文规则
 
-- One independently verifiable assertion per sentence, written with concrete words (grep-able), no pronouns.
-- No hedging ("maybe", "I think"); uncertain content goes into `sources`, never the body.
-- The body carries no trust state; trust is derived from the latest verification record (gating rules live in verifications.md).
+- 每句一个独立可验证断言，用具体词（grep 可命中），不用代词。
+- 不写模糊措辞（"可能"、"我认为"）；不确定内容写进 `sources`，绝不进正文。
+- 断言自洽：禁止跨实体比较或引用；一条事实不得依赖另一实体的正文。
+- 正文不承载信任状态；信任由最新验证记录推导（门控规则见 verifications.md）。

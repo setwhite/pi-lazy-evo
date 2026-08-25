@@ -1,21 +1,15 @@
 /**
- * /memory record 沉淀扳机：派发沉淀任务（增 + 改），主会话代理按协议执行。
+ * /memory record 子命令：派发记录任务（增 + 改），主会话代理按协议执行。
+ * 剩余参数作为附注素材注入提示词，便于指定记录范围。
  */
-import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { MainRunner } from "../agents/main.ts";
-import { recordTask } from "../agents/actions.ts";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { Runtime } from "../index.ts";
+import { recordTask } from "../prompts/tasks.ts";
+import { injectTask } from "../prompts/build.ts";
 import { notify } from "../tools/notify.ts";
 
-/** /memory record：派发沉淀任务 */
-async function record(_args: string, ctx: ExtensionCommandContext, runner: MainRunner): Promise<void> {
-	runner.run(recordTask());
-	notify(ctx, "Memory Record", ["Reminder injected — the agent will settle memory now."]);
-}
-
-/** 注册 /memory record */
-export function registerRecordCommand(pi: ExtensionAPI, runner: MainRunner): void {
-	pi.registerCommand("memory record", {
-		description: "Remind the agent to settle durable conclusions into .memory (create or update entities)",
-		handler: (args, ctx) => record(args, ctx, runner),
-	});
+/** /memory record [note]：派发记录任务 */
+export async function record(args: string, ctx: ExtensionCommandContext, runtime: Runtime): Promise<void> {
+	injectTask(runtime, recordTask(args.trim()));
+	notify(ctx, "Memory Record", ["Reminder injected — the agent will record memory now."]);
 }

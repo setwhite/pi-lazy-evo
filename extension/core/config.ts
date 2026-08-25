@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 /** 扩展命名空间名 */
 const NAMESPACE = "lazy-memory";
 
-/** 运行模式：manual = 仅手动工具；auto = 后台便宜模型自动沉淀+验证 */
+/** 运行模式：manual = 仅手动命令；auto = 命令 + 后台自动 record/verify */
 export type MemoryMode = "manual" | "auto";
 
 /** auto 用的便宜模型：后台 worker 子进程指向的 model（缺省用主会话模型） */
@@ -24,7 +24,7 @@ export interface AutoModel {
 	thinking?: string;
 }
 
-/** 沉淀 worker 默认工具白名单：读库/检索/写库够用，不放开联网 */
+/** record worker 默认工具白名单：读库/检索/写库够用，不放开联网 */
 const DEFAULT_MEMO_TOOLS = ["read", "grep", "ls", "bash", "write", "edit"] as const;
 /** 验证 worker 默认工具白名单：多 web 检索，支持 web-research 验证器 */
 const DEFAULT_VERIFY_TOOLS = [...DEFAULT_MEMO_TOOLS, "web_search", "web_fetch"] as const;
@@ -33,13 +33,13 @@ const DEFAULT_VERIFY_TOOLS = [...DEFAULT_MEMO_TOOLS, "web_search", "web_fetch"] 
 export interface MemorySettings {
 	/** 运行模式 */
 	mode: MemoryMode;
-	/** 自动沉淀触发阈值：会话新增消耗达该 token 数触发一次 */
+	/** 自动 record 触发阈值：会话新增消耗达该 token 数触发一次 */
 	autoWatermarkTokens: number;
 	/** 后台 worker 最大轮数（成本上限） */
 	autoMaxTurns: number;
 	/** 便宜模型（缺省用主会话模型） */
 	autoModel?: AutoModel;
-	/** 沉淀 worker 工具白名单 */
+	/** record worker 工具白名单 */
 	autoMemoTools: string[];
 	/** 验证 worker 工具白名单 */
 	autoVerifyTools: string[];
@@ -78,6 +78,19 @@ function parseTools(value: unknown): string[] | undefined {
 	return tools.length === 0 ? undefined : [...new Set(tools)];
 }
 
+/** 命名空间字段解析器表：settings 键 → 解析函数（解析失败返回 undefined 即忽略该字段） */
+const FIELD_PARSERS: Record<keyof MemorySettings, (value: unknown) => unknown> = {
+	mode: (v) => (v === "manual" || v === "auto" ? v : undefined),
+	autoWatermarkTokens: positiveInt,
+	autoMaxTurns: positiveInt,
+	autoModel: parseAutoModel,
+	autoMemoTools: parseTools,
+	autoVerifyTools: parseTools,
+};
+
+/** 全字段键表：解析与合并共用（与 FIELD_PARSERS 一一对应） */
+const FIELD_KEYS = Object.keys(FIELD_PARSERS) as (keyof MemorySettings)[];
+
 /** 解析单个 settings.json 中的命名空间为配置片段；失败或缺命名空间返回 null */
 function readNamespace(path: string): Partial<MemorySettings> | null {
 	let raw: unknown;
@@ -89,20 +102,20 @@ function readNamespace(path: string): Partial<MemorySettings> | null {
 	const ns = (raw as Record<string, unknown>)[NAMESPACE];
 	if (typeof ns !== "object" || ns === null) return null;
 	const data = ns as Record<string, unknown>;
-	const partial: Partial<MemorySettings> = {};
-	const mode = data.mode;
-	if (mode === "manual" || mode === "auto") partial.mode = mode;
-	const watermark = positiveInt(data.autoWatermarkTokens);
-	if (watermark !== undefined) partial.autoWatermarkTokens = watermark;
-	const turns = positiveInt(data.autoMaxTurns);
-	if (turns !== undefined) partial.autoMaxTurns = turns;
-	const model = parseAutoModel(data.autoModel);
-	if (model) partial.autoModel = model;
-	const memoTools = parseTools(data.autoMemoTools);
-	if (memoTools) partial.autoMemoTools = memoTools;
-	const verifyTools = parseTools(data.autoVerifyTools);
-	if (verifyTools) partial.autoVerifyTools = verifyTools;
-	return partial;
+	const entries: [string, unknown][] = [];
+	for (const [key, parse] of Object.entries(FIELD_PARSERS)) {
+		const value = parse(data[key]);
+		if (value !== undefined) entries.push([key, value]);
+	}
+	return Object.fromEntries(entries) as Partial<MemorySettings>;
+}
+
+/** 把片段中的非空字段合并进配置（undefined 保持现值） */
+function applyNamespace(merged: MemorySettings, ns: Partial<MemorySettings>): void {
+	const target = merged as unknown as Record<string, unknown>;
+	for (const key of FIELD_KEYS) {
+		if (ns[key] !== undefined) target[key] = ns[key];
+	}
 }
 
 /** 合并全局与项目配置（项目覆盖全局） */
@@ -110,13 +123,7 @@ export function loadConfig(cwd: string): MemorySettings {
 	const merged: MemorySettings = { ...DEFAULTS };
 	const namespaces = [readNamespace(join(homedir(), ".pi", "agent", "settings.json")), readNamespace(join(cwd, ".pi", "settings.json"))];
 	for (const ns of namespaces) {
-		if (!ns) continue;
-		if (ns.mode) merged.mode = ns.mode;
-		if (ns.autoWatermarkTokens !== undefined) merged.autoWatermarkTokens = ns.autoWatermarkTokens;
-		if (ns.autoMaxTurns !== undefined) merged.autoMaxTurns = ns.autoMaxTurns;
-		if (ns.autoModel) merged.autoModel = ns.autoModel;
-		if (ns.autoMemoTools) merged.autoMemoTools = ns.autoMemoTools;
-		if (ns.autoVerifyTools) merged.autoVerifyTools = ns.autoVerifyTools;
+		if (ns) applyNamespace(merged, ns);
 	}
 	return merged;
 }

@@ -1,44 +1,46 @@
-# Memory Library Protocol — Verifications
+# 记忆库协议 — 验证记录
 
-Verification records live in `.memory/verifications/`, read this file together with the operation manual before appending any record. Entity file format lives in entities.md.
+验证记录位于 `.memory/verifications/`，追加任何记录前请把本手册与操作手册一起读完。实体文件格式见 entities.md。
 
-## Verification record format
+## 验证记录格式
 
-`verifications/<date>-<id>.md`, append-only — never modify old files.
-When the same entity gets multiple records on the same day, the filename gets a suffix: `<date>-<id>-2.md`, `-3.md`, …
+`verifications/<日期>-<id>.md`，只追加——绝不修改旧文件。
+同一实体同日多条时，文件名自动加序号后缀：`<日期>-<id>-2.md`、`-3.md`…
 
-| Field | Value |
+| 字段 | 取值 |
 |---|---|
 | target | entities/<id>.md |
-| validator | see Verifiers |
-| checked_at | ISO timestamp |
+| validator | 见下方验证器 |
+| checked_at | ISO 时间戳 |
 | result | passed / failed |
-| evidence | verifiable basis |
 
-Records that do not conform (non-entities/<id>.md target, invalid result, or non-ISO `checked_at`) are ignored by the extension.
+front-matter 恰好这四个字段。记录正文（front-matter 之外的全部内容）是证据——
+自由文本，承载可复核依据（来源、命令输出、用户的原话）。证据必填：没有正文的记录不算验证。
 
-## Verifiers (v2: layered abstraction as a verifier set)
+不合规的记录（target 不是 entities/<id>.md、result 非法、checked_at 非 ISO）会被扩展忽略。
 
-| Verifier id | Judgment authority | Notes |
+## 验证器（v2：分层抽象为一组验证器）
+
+| 验证器 id | 判断权威 | 说明 |
 |---|---|---|
-| format | agent | front-matter vs filename structure check |
-| conflict | agent | read the library and judge overlap/contradiction, record the analysis as evidence |
-| code | agent | write and run the command yourself (e.g. bash); record the command as `code: <command>` and its output as evidence |
-| web | agent | research online and record your findings as evidence |
-| user | user | ask the user and record their confirmation |
+| format | 代理 | front-matter 与文件名结构核对 |
+| conflict | 代理 | 通读记忆库，判断重叠/矛盾，把分析写进记录正文 |
+| code | 代理 | 自己编写并运行命令（如 bash）；把 `code: <命令>` 与输出写进记录正文 |
+| web | 代理 | 联网调研，把发现写进记录正文 |
+| user | 用户 | 询问用户，把确认写进记录正文 |
 
-`validator` field values: `format` / `conflict` / `code: <command>` / `web-research` / `local-evidence` / `user-confirm` (the last three stay compatible with v1 history).
-Custom verifier fields are reserved (mode: custom + command); no protocol or storage change needed later.
+`validator` 字段取值：`format` / `conflict` / `code: <命令>` / `web-research` / `local-evidence` / `user-confirm`（后三个与 v1 历史兼容）。
+自定义验证器字段已预留（mode: custom + command）；无需改协议与存储。
 
-## Gating: the four states
+## 门控：四态
 
-Take the entity's newest verification record (max `checked_at`) and compare its time with the entity file mtime:
+取实体最新的验证记录（checked_at 最大者），与其正文文件 mtime 对比：
 
-| Condition | State | Handling |
+| 条件 | 状态 | 处置 |
 |---|---|---|
-| latest record passed and newer than last entity edit | ✅ passed | use as fact |
-| latest record failed and newer than last entity edit | ⚠️ failed | do not use as fact; may re-verify |
-| no records at all | ❓ unverified | use with caution; verify before key decisions rely on it |
-| latest record older than last entity edit | ⏳ stale (re-verify) | body changed, old verification no longer matches; re-verify or ignore |
+| 最新记录 passed 且晚于正文最后修改 | ✅ passed | 当事实用 |
+| 最新记录 failed 且晚于正文最后修改 | ⚠️ failed | 不得当事实用；可复验 |
+| 完全没有记录 | ❓ unverified | 慎用；关键决策依赖前先验证 |
+| 最新记录早于正文最后修改 | ⏳ stale（需复验） | 正文改过，旧验证不再匹配；复验或忽略 |
 
-Updating an entity body requires no deletion of records — the timestamp rule automatically downgrades it to "stale (re-verify)".
+更新实体正文无需删除记录——时间戳规则自动把它降为"stale（需复验）"。

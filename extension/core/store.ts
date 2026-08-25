@@ -10,7 +10,7 @@ import { listVerifications } from "./verifications.ts";
 
 export { memoryDir, ensureMemoryDir } from "./layout.ts";
 export type { EntityMeta, EntityFile } from "./entities.ts";
-export { validateId, validateKind, readEntity, writeEntity } from "./entities.ts";
+export { validateId, validateKind, readEntity, writeEntity, listEntities } from "./entities.ts";
 export type { VerificationRecord } from "./verifications.ts";
 export { listVerifications, appendVerification } from "./verifications.ts";
 
@@ -24,9 +24,9 @@ export interface EntityWithVerifications {
 export function readLibrary(cwd: string): EntityWithVerifications[] {
 	const byTarget = new Map<string, VerificationRecord[]>();
 	for (const v of listVerifications(cwd)) {
-		const list = byTarget.get(v.target);
-		if (list) list.push(v);
-		else byTarget.set(v.target, [v]);
+		const list = byTarget.get(v.target) ?? [];
+		list.push(v);
+		byTarget.set(v.target, list);
 	}
 	return listEntities(cwd).map((meta) => ({ meta, verifications: byTarget.get(`entities/${meta.id}.md`) ?? [] }));
 }

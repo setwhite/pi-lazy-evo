@@ -1,32 +1,31 @@
 /**
- * /memory mode 挡位切换：查看或切换 manual|auto（只写 settings.json，
- * 不动工具集/提示词 → 不影响 prompt cache；auto 行为尚未实现，字段即状态）。
+ * /memory mode 子命令：查看或切换 manual|auto（只写 settings.json，
+ * 不动工具集/提示词 → 不影响 prompt cache；auto 挡由 subagents/auto.ts 水位触发双 worker）。
  */
-import type { ExtensionCommandContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadConfig, setMode } from "../core/config.ts";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { loadConfig, setMode, type MemoryMode } from "../core/config.ts";
 import { notify } from "../tools/notify.ts";
+import type { Runtime } from "../index.ts";
+
+/** 模式含义（一行文案）：auto = 命令 + 后台 record/verify；manual = 仅命令 */
+const MODE_LABEL: Record<MemoryMode, string> = {
+	auto: "commands + background record & verify",
+	manual: "commands only",
+};
 
 /** /memory mode [auto|manual] */
-async function mode(args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function mode(args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
 	const wanted = args.trim().toLowerCase();
 	if (wanted !== "auto" && wanted !== "manual") {
 		const current = loadConfig(ctx.cwd).mode;
-		notify(ctx, "Memory Mode", [`Current mode: ${current}`, "Usage: /memory mode [auto|manual]"]);
+		notify(ctx, "Memory Mode", [
+			`Current mode: ${current} (${MODE_LABEL[current]}).`,
+			"Usage: /memory mode [auto|manual]",
+		]);
 		return;
 	}
 	const ok = setMode(ctx.cwd, wanted);
 	notify(ctx, "Memory Mode", [
-		`Mode ${ok ? "switched to" : "failed to switch to"} ${wanted}.`,
-		wanted === "auto"
-			? "Auto mode: background cheap-model worker settles & verifies memory at the token watermark (settings: autoWatermarkTokens / autoModel)."
-			: "Manual mode: commands are the only triggers.",
+		ok ? `Mode switched to ${wanted} (${MODE_LABEL[wanted]}).` : `Failed to switch to ${wanted}.`,
 	]);
-}
-
-/** 注册 /memory mode */
-export function registerModeCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("memory mode", {
-		description: "Show or switch mode: /memory mode [auto|manual] (writes settings.json only)",
-		handler: mode,
-	});
 }

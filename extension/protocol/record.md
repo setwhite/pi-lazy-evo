@@ -1,23 +1,23 @@
-# Memory Library Protocol — Record (Settle)
+# 记忆库协议 — 记录（Record）
 
-Triggered by `/memory record`. Read this manual and entities.md before writing anything into `.memory/`.
+由 `/memory record` 触发。向 `.memory/` 写任何内容前，请先读本手册与 entities.md。
 
-## Principles
+## 原则
 
-- The library is passive: nothing is recorded unless explicitly requested.
-- Only durable conclusions worth citing later go into the library; transient details never do.
+- 记忆库是被动的：除非明确请求，否则不记录任何内容。
+- 只有值得日后引用的长期结论才入库；临时性细节永不入库。
 
-## Writing (create / update)
+## 写入（新建 / 更新）
 
-- Create: write `entities/<id>.md` for a new entity; validate id and kind first (see entities.md).
-- Update: rewrite the body with the new assertions; append new origins to `sources` separated by `；`, never duplicating an origin already present.
-- Updating a body deletes no verification records — the timestamp rule automatically downgrades the entity to `stale (re-verify)`.
-- Changing an id means creating a new entity; do not rename files.
+- 新建：为实体写 `entities/<id>.md`；先校验 id 与 kind（见 entities.md）。
+- 更新：用新断言重写正文；把新出处追加进 `sources`（以 `；` 分隔，绝不重复已有出处）。
+- 更新正文不删任何验证记录——时间戳规则自动把实体降为"stale（需复验）"。
+- 改 id 等于新建实体；不要重命名文件。
 
-## Boundary with verification records
+## 与验证记录的边界
 
-Verification records are appended only by the verification flow (verify.md). The settle flow never writes, modifies, or deletes anything under `.memory/verifications/`.
+验证记录只由验证流程追加（verify.md）。记录流程绝不写、改、删 `.memory/verifications/` 下的任何内容。
 
-## Commits
+## Git
 
-`.memory/` lives inside the git repository: changes are natively revertable and traceable. Commit messages follow Conventional Commits with the `memory:` scope (documentation type).
+`.memory/` 是个人运行时数据，不随仓库分发（gitignore）。绝不提交记忆库变更。

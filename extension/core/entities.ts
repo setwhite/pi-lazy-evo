@@ -1,11 +1,14 @@
 /**
  * 实体域：.memory/entities/ 读写。
- * 实体文件 front-matter 恰好三字段（id/kind/sources）。
+ * 实体文件 front-matter 恰好三字段（id/kind/sources）；id/kind 校验在 tools/validate.ts。
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter } from "../tools/frontmatter.ts";
+import { validateId, validateKind } from "../tools/validate.ts";
 import { ensureMemoryDir, memoryDir } from "./layout.ts";
+
+export { validateId, validateKind } from "../tools/validate.ts";
 
 /** 实体元信息 */
 export interface EntityMeta {
@@ -30,27 +33,7 @@ export interface EntityFile {
 	raw: string;
 }
 
-/** 实体文件名合法格式（小写字母数字连字符） */
-const ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
-/** 合法的实体类型 */
-const KINDS = ["tool", "person", "project", "concept", "decision"] as const;
-
-/** id 合法性校验，返回错误信息或 null */
-export function validateId(id: string): string | null {
-	if (!ID_RE.test(id)) return "id must be lowercase-hyphenated (e.g. tool-name), got: " + id;
-	return null;
-}
-
-/** kind 合法性校验，返回错误信息或 null */
-export function validateKind(kind: string): string | null {
-	if (!(KINDS as readonly string[]).includes(kind)) {
-		return "kind must be one of " + KINDS.join("/") + ", got: " + kind;
-	}
-	return null;
-}
-
-/** 列出全部实体（按文件名排序；仅收录 front-matter 合法的实体，损坏文件不入库；内部：readEntity/readLibrary 共用） */
+/** 列出全部实体（按文件名排序；仅收录 front-matter 与 id/kind 格式合法的实体，损坏/非法文件不入库；内部：readEntity/readLibrary 共用） */
 export function listEntities(cwd: string): EntityMeta[] {
 	const dir = join(memoryDir(cwd), "entities");
 	if (!existsSync(dir)) return [];
@@ -61,6 +44,7 @@ export function listEntities(cwd: string): EntityMeta[] {
 			const p = join(dir, f);
 			const meta = parseEntityMeta(p);
 			if (!meta?.id || !meta.kind) return [];
+			if (validateId(meta.id) || validateKind(meta.kind)) return [];
 			return [{ id: meta.id, kind: meta.kind, sources: meta.sources, path: p, mtimeMs: statSync(p).mtimeMs }];
 		});
 }
@@ -87,7 +71,7 @@ export function readEntity(cwd: string, id: string): EntityFile | null {
 	const meta = listEntities(cwd).find((e) => e.id === id);
 	if (!meta) return null;
 	const raw = readFileSync(meta.path, "utf8");
-	return { meta, raw, body: raw.replace(/^---[\s\S]*?---\n?/, "").trim() };
+	return { meta, raw, body: raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim() };
 }
 
 /** 合并出处：已有且不含新出处则分号追加（保持 front-matter 单行） */
@@ -98,6 +82,10 @@ function mergeSources(existing: string | undefined, source: string): string {
 
 /** 写入或更新实体；更新时 source 追加新出处（分号分隔去重，保持 front-matter 单行） */
 export function writeEntity(cwd: string, input: { id: string; kind: string; sources: string; assertions: string[] }): EntityFile {
+	const idError = validateId(input.id);
+	if (idError) throw new Error(idError);
+	const kindError = validateKind(input.kind);
+	if (kindError) throw new Error(kindError);
 	ensureMemoryDir(cwd);
 	const existing = readEntity(cwd, input.id);
 	const sources = mergeSources(existing?.meta.sources, input.sources);

@@ -14,6 +14,7 @@ export interface VerificationRecord {
 	validator: string;
 	checkedAt: string;
 	result: "passed" | "failed";
+	/** 证据：记录正文（front-matter 之外的全部内容） */
 	evidence: string;
 	/** checked_at 解析为毫秒，解析失败为 0 */
 	checkedAtMs: number;
@@ -55,7 +56,7 @@ function parseVerification(path: string, targetSuffix: string | null): Verificat
 		validator: String(fm.validator ?? ""),
 		checkedAt,
 		result: fm.result,
-		evidence: String(fm.evidence ?? ""),
+		evidence: raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim(),
 		checkedAtMs,
 	};
 }
@@ -67,10 +68,10 @@ function parseCheckedAt(checkedAt: string): number {
 	return Number.isNaN(ms) ? 0 : ms;
 }
 
-/** 追加验证记录（只追加；同日多条自动加序号后缀） */
+/** 追加验证记录（只追加；同日多条自动加序号后缀）；证据写在正文 */
 export function appendVerification(
 	cwd: string,
-	input: { entityId: string; validator: string; result: "passed" | "failed"; evidence: string; checkedAt?: string },
+	input: { entityId: string; validator: string; result: "passed" | "failed"; body: string; checkedAt?: string },
 ): string {
 	ensureMemoryDir(cwd);
 	const dir = join(memoryDir(cwd), "verifications");
@@ -80,7 +81,7 @@ export function appendVerification(
 	let name = `${date}-${input.entityId}`;
 	let path = join(dir, name + ".md");
 	for (let i = 2; existsSync(path); i++) path = join(dir, `${name}-${i}.md`);
-	const raw = `---\ntarget: entities/${input.entityId}.md\nvalidator: ${input.validator}\nchecked_at: ${checkedAt}\nresult: ${input.result}\nevidence: ${input.evidence}\n---\n`;
+	const raw = `---\ntarget: entities/${input.entityId}.md\nvalidator: ${input.validator}\nchecked_at: ${checkedAt}\nresult: ${input.result}\n---\n\n${input.body.trim()}\n`;
 	writeFileSync(path, raw);
 	return path;
 }

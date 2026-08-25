@@ -1,17 +1,18 @@
 /**
- * auto 自动挡：turn_end 时钟 + token 水位判定，串行派发两个后台任务（沉淀→验证）。
- * 任务语义与手动命令同一套（agents/actions.ts），只是通道不同：
- * 手动走主会话（agents/main.ts dispatch），自动走子进程（agents/workers spawn）。
+ * auto 自动挡：turn_end 时钟 + token 水位判定，串行派发两个后台任务（record→verify）。
+ * 任务语义与手动命令同一套（prompts/tasks.ts），只是通道不同：
+ * 手动走主会话（prompts/build.ts injectTask），自动走子进程（本目录 worker.ts spawn）。
  * 验证清单与手动 /memory verify 同一筛选（gate.selectPending 算好注入，不靠模型自找）。
  * 防循环：水位增量触发；worker 在跑时吸收增量不重复触发；compaction 回落重设基线。
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type MemorySettings } from "../core/config.ts";
 import { gateLibrary, selectPending, toPending } from "../core/gate.ts";
+import { ensureMemoryDir } from "../core/layout.ts";
 import { readLibrary } from "../core/store.ts";
 import type { Runtime } from "../index.ts";
-import { extractTranscript, recordTask, verifyTask } from "../agents/actions.ts";
-import { runWorkerTask } from "../agents/workers/worker.ts";
+import { extractTranscript, recordTask, verifyTask } from "../prompts/tasks.ts";
+import { runWorkerTask } from "./worker.ts";
 
 /** auto 触发状态机（闭包持有，非模块级全局） */
 export interface AutoState {
@@ -33,7 +34,7 @@ export interface AutoDecision {
 export const INITIAL_AUTO_STATE: AutoState = { baselineTokens: 0, initialized: false, inFlight: false };
 
 /**
- * 纯判定：给定状态与当前累计 token，水位增量是否足以触发一次自动沉淀。
+ * 纯判定：给定状态与当前累计 token，水位增量是否足以触发一次自动 record。
  * - 首次观察吸收基线不触发；compaction（tokens 回落）重设基线不触发；
  * - 增量未达阈值不触发；worker 在跑时吸收增量（结束后不重复触发）。
  */
@@ -63,11 +64,12 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 	});
 }
 
-/** 串行派发：先沉淀（带会话素材），后验证（算好待验清单注入） */
+/** 串行派发：先 record（带会话素材），后 verify（算好待验清单注入） */
 async function runAutoWorker(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings): Promise<void> {
-	const settle = recordTask(extractTranscript(ctx.sessionManager.getEntries()));
-	await runWorkerTask("沉淀", settle, runtime.protocolDir, ctx, config, config.autoMemoTools);
+	ensureMemoryDir(ctx.cwd); // 目录骨架由扩展负责，worker 只管读写文件
+	const record = recordTask(extractTranscript(ctx.sessionManager.getEntries()));
+	await runWorkerTask("record", record, runtime.protocolDir, ctx, config, config.autoMemoTools);
 	const pending = selectPending(gateLibrary(readLibrary(ctx.cwd)));
 	const verify = verifyTask(toPending(pending));
-	await runWorkerTask("验证", verify, runtime.protocolDir, ctx, config, config.autoVerifyTools);
+	await runWorkerTask("verify", verify, runtime.protocolDir, ctx, config, config.autoVerifyTools);
 }

@@ -1,7 +1,8 @@
 {
+  "name": "lazy-memory",
   "scripts": {
     "test": "bun test",
-    "typecheck": "bunx tsc -p .tsconfig.json"
+    "typecheck": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {},
   "devDependencies": {
