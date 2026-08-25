@@ -1,0 +1,10 @@
+{
+  "lazy-memory": {
+    "autoModel": {
+      "provider": "opencode-go",
+      "id": "mimo-v2.5",
+      "thinking": "medium"
+    },
+    "mode": "manual"
+  }
+}
