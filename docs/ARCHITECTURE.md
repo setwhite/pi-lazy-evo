@@ -87,8 +87,8 @@ tools 最底层（对 store 仅 type-only）。
 - 扩展发现：`~/.pi/agent/extensions/`（全局）、`.pi/extensions/`（项目，信任后加载），
   支持符号链接。
 
-## 发布待办
+## 发布状态
 
-- [ ] 清理 v1 机外副本（`.pi/skills/lazy-memory/`）
-- [ ] 全局安装位软链
-- [ ] `pi -e` 端到端回归后 push GitHub
+- [x] 清理 v1 机外副本（`.pi/skills/lazy-memory/`）
+- [x] 推送到 GitHub（origin/main 已同步）
+- [ ] 全局安装位软链（当前以项目位 `.pi/extensions/` 安装）

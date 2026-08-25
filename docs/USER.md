@@ -28,8 +28,9 @@
 ## 挡位
 
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库。
-- `auto`：后台便宜模型按 token 水位自动 record + verify。配置在项目
-  `.pi/settings.json` 的 `lazy-memory` 命名空间（每回合重新读取，改完即生效）：
+- `auto`：后台便宜模型按 token 水位自动 record + verify。配置在
+  `.pi/settings.json` 的 `lazy-memory` 命名空间（全局 `~/.pi/agent/settings.json` 与项目合并，项目覆盖），
+  每回合重新读取，改完即生效）：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -72,4 +73,5 @@
 
 ## 安装
 
-`~/.pi/agent/extensions/lazy-memory` 软链到本仓库 `extension/`，pi 自动加载。
+软链到 `~/.pi/agent/extensions/lazy-memory`（全局，所有项目生效）或项目
+`.pi/extensions/lazy-memory`（仅当前项目，如本仓库自用），指向本仓库 `extension/`，pi 自动加载。
