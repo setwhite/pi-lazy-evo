@@ -1,26 +1,77 @@
-# pi-lazy-evo
+# pi-lazy-evo — 会自我进化的代理记忆
 
-一个"懒惰"的 AI 记忆库：**被动记录、grep 检索、验证门控，可选 auto 挡自动沉淀验证**。
+pi 编码代理的记忆扩展：把会话里的长期结论沉淀为**带验证状态的实体卡片**，用四态门控
+决定信任度，让记忆越用越准，而不是越攒越脏。
 
-> 你没有存记忆的意识，就不会有记忆。
+不装向量库、不做 RAG、零索引维护——检索就是 grep，验证就是按协议手册核对，
+扩展只做命令扳机与门控计算。
 
-为 pi 等支持扩展的编码代理提供被动记忆。扩展只做命令扳机与门控计算，
-读写与验证由代理按协议手册执行（零工具注入）。
+## 解决什么问题
 
-```bash
-/memory            # 帮助
-/memory overview   # 总览：挡位 + 四态分布 + 待验清单
-/memory record     # 让代理把长期结论写入 .memory/（可带附注）
-/memory query      # 让代理 grep 检索记忆库（可带关键词）
-/memory verify     # 让代理核对待验实体（可带实体 id）
-/memory mode       # 查看/切换 manual / auto 挡位
+代理记忆最常见的三种死法：
+
+| 问题 | 后果 |
+|---|---|
+| 只写不验 | 幻觉结论写进记忆，永远被当事实引用 |
+| 只增不改 | 旧结论与新事实打架，没人知道谁对 |
+| 维护太贵 | 整理、建索引、搭 RAG 管道，全是前置成本 |
+
+对策：每条记忆必须**可验证**，验证结果决定它**能不能当事实用**。
+
+## 核心机制
+
+```
+沉淀 ──► 验证 ──► 演化
+结论 → 实体卡片    四态门控筛选    幸存者当事实用，谬误被淘汰
 ```
 
-## 挡位
+- **沉淀**：长期结论 → `.memory/entities/`，一句一个可验证断言
+- **验证**：核对流水账只追加、可审计；passed 存活，failed 淘汰重验
+- **演化**：auto 挡在会话结束时自动沉淀 + 验证，无需人为维护
 
-- `manual`（默认）：只有手动 `/memory` 命令触碰记忆库。
-- `auto`：后台便宜模型按 token 水位自动沉淀 + 验证（turn_end 双 worker），配置在
-  项目 `.pi/settings.json` 的 `pi-lazy-evo` 命名空间，详见 [docs/USER.md](docs/USER.md)。
+每张实体按「最新验证记录 vs 正文修改时间」得出四态（passed / failed / unverified /
+stale），决定它能不能当事实用，详见 [docs/USER.md](docs/USER.md)。
+
+## 快速开始
+
+### 安装
+
+要求 pi 编码代理。把本仓库 `extension/` 软链到扩展目录（任选其一）：
+
+```bash
+# 全局：所有项目生效
+ln -s "$PWD/extension" ~/.pi/agent/extensions/pi-lazy-evo
+
+# 仅当前项目
+mkdir -p .pi/extensions
+ln -s "$PWD/extension" .pi/extensions/pi-lazy-evo
+```
+
+重启 pi 自动加载。记忆库默认在项目工作目录 `.memory/`（`MEMORY_DIR` 可覆盖）。
+
+### 第一次使用
+
+```
+/memory record          # 把近期长期结论写入记忆库
+/memory overview        # 查看挡位与四态分布
+/memory verify          # 批量核对 unverified / stale 的实体
+/memory query <关键词>  # 检索记忆
+```
+
+沉淀出来的实体卡片长这样（`.memory/entities/<id>.md`）：
+
+```markdown
+---
+id: entity_id-validation-policy
+kind: decision
+sources: session-2025-01-id-validation-simplification
+---
+
+实体 ID 校验只保留三条防呆约束：拒绝空/纯空白、拒绝换行与制表符、
+拒绝 `/` 和 `\`（id 用作文件名，含路径分隔符会逃出 entities 目录）。
+```
+
+完整命令表、门控四态与 auto 挡位配置见 [docs/USER.md](docs/USER.md)。
 
 ## 文档
 
@@ -30,15 +81,7 @@
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计：分层、数据模型、设计决策 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发指南：测试、编码约定、新增子命令 |
 
-代理执行契约在 [extension/protocol/](extension/protocol/)（中文手册目录，唯一真相源）：
-`entities.md`（实体与库结构）、`verifications.md`（验证流水）、
-`record.md` / `verify.md`（操作手册）。
-
-## 安装
-
-软链到 `~/.pi/agent/extensions/pi-lazy-evo`（全局）或项目 `.pi/extensions/pi-lazy-evo`（仅当前项目），
-指向本仓库 `extension/`，pi 自动加载。
-记忆库默认在当前工作目录 `.memory/`（`MEMORY_DIR` 环境变量可覆盖）。
+代理执行契约在 [extension/protocol/](extension/protocol/)（中文手册，唯一真相源）。
 
 ## License
 

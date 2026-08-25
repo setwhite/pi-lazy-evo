@@ -35,38 +35,15 @@ tools 最底层（对 store 仅 type-only）。
 └── verifications/     # 验证流水账：一次一条，只追加
 ```
 
-**实体**（`entities/<id>.md`，id 任意非空单行、不含换行/路径分隔符）：
+**实体**（`entities/<id>.md`）：front-matter 恰好 id / kind / sources 三字段；正文每句一个可验证断言，信任不由正文承载。
 
-| 字段 | 说明 |
-|---|---|
-| id | 与文件名一致 |
-| kind | tool / person / project / concept / decision |
-| sources | 出处 |
+**验证记录**（`verifications/<日期>-<id>.md`，日期仅防重名，门控不读）：front-matter 恰好
+target / validator / checked_at / result 四字段，证据写在记录正文（必填）。
 
-正文：每句一个可验证断言、具体词、无推测；信任不由正文承载。
+字段取值与校验规则见 `extension/protocol/entities.md` / `verifications.md`（唯一真相源）。
 
-**验证记录**（`verifications/<日期>-<id>.md`，日期仅防重名，门控不读）：
-
-| 字段 | 说明 |
-|---|---|
-| target | entities/<id>.md |
-| validator | format / conflict / code: … / web-research / local-evidence / user-confirm |
-| checked_at | 完整 ISO 时间戳 |
-| result | passed / failed |
-
-证据写在记录正文（必填）。
-
-**门控四态**（最新记录时间 vs 正文 mtime，3s 容差）：
-
-| 条件 | 状态 |
-|---|---|
-| 最新记录 passed 且晚于正文 | ✅ passed |
-| 最新记录 failed 且晚于正文 | ⚠️ failed |
-| 无记录 | ❓ unverified |
-| 最新记录早于正文 | ⏳ stale |
-
-更新正文自动降级 stale，无需删验证记录。门控不落盘，每次实时计算。
-严格模式：格式非法/损坏文件一律忽略（target 精确匹配、checked_at 完整 ISO、证据只取正文）。
+**门控四态**（最新记录 checked_at vs 正文 mtime，3s 容差）：规则见
+`extension/protocol/verifications.md`。门控不落盘，每次实时计算；严格模式：格式非法/损坏文件一律忽略（target 精确匹配、checked_at 完整 ISO、证据只取正文）。
 
 ## 设计决策
 
@@ -86,10 +63,3 @@ tools 最底层（对 store 仅 type-only）。
   选中值整体替换该串（参数候选 value 须带子命令词，如 `mode auto`）；
 - 扩展发现：`~/.pi/agent/extensions/`（全局）、`.pi/extensions/`（项目，信任后加载），
   支持符号链接。
-
-## 发布状态
-
-- [x] 清理 v1 机外副本（`.pi/skills/lazy-memory/`）
-- [x] 推送到 GitHub（origin/main 已同步）
-- [x] 项目更名为 pi-lazy-evo（settings 命名空间 / 提示词 / 安装位同步）
-- [ ] 全局安装位软链（当前以项目位 `.pi/extensions/` 安装）

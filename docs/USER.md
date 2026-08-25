@@ -73,5 +73,4 @@
 
 ## 安装
 
-软链到 `~/.pi/agent/extensions/pi-lazy-evo`（全局，所有项目生效）或项目
-`.pi/extensions/pi-lazy-evo`（仅当前项目，如本仓库自用），指向本仓库 `extension/`，pi 自动加载。
+见 [README](../README.md)：把本仓库 `extension/` 软链到全局或项目扩展位，pi 自动加载。
