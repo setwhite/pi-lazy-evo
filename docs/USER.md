@@ -1,45 +1,36 @@
 # 用户指南
 
-`/memory` 单一入口 + 6 个子命令。命令只是扳机：读写与验证由代理按 `extension/protocol/`
-手册执行，检索由代理用自带工具（grep/read）+ 扩展注入的预计算索引完成。
-输入 `/memory ` 自动弹出子命令候选；裸 `/memory` 显示帮助。
+`/memory` 是唯一入口，6 个子命令。命令只是扳机：读写与验证由代理按
+`extension/protocol/` 手册执行，扩展不注入专用工具。输入 `/memory ` 自动弹出子命令候选，
+裸 `/memory` 或 `/memory help` 显示帮助。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `/memory overview` | 查看挡位、四态分布、待验清单（不注入代理） |
-| `/memory record [note]` | 让代理把近期长期结论写入 `.memory/`；附注可限定范围 |
-| `/memory query [terms]` | 让代理 grep 检索 `.memory/`；无关键词则从会话推断 |
-| `/memory verify [id]` | 让代理核对实体：无 id 只验 unverified/stale，有 id 全量复验该实体 |
-| `/memory mode [auto\|manual]` | 查看/切换挡位（写 settings.json） |
-
-示例（overview）：
-
-```
-/memory overview
-→ Memory Overview
-  Mode: manual
-  Entities 3 | passed 1 / failed 0 / unverified 1 / stale 1
-  Needs verification (2): foo (unverified), bar (stale)
-  Run /memory verify for a batch check.
-```
+| `/memory overview` | 挡位、四态分布、待验清单（只展示，不派任务） |
+| `/memory record [note]` | 把近期长期结论写入记忆库；附注可限定范围 |
+| `/memory query [terms]` | grep 检索记忆库；无关键词则由代理从会话推断 |
+| `/memory verify [id]` | 核对实体：不带 id 只验 unverified/stale，带 id 全量复验该实体 |
+| `/memory mode [auto\|manual]` | 查看或切换挡位 |
+| `/memory help` | 显示命令帮助 |
 
 ## 挡位
 
-- `manual`（默认）：只有手动 `/memory` 命令触碰记忆库。
-- `auto`：后台便宜模型按 token 水位自动 record + verify。配置在
-  `.pi/settings.json` 的 `pi-lazy-evo` 命名空间（全局 `~/.pi/agent/settings.json` 与项目合并，项目覆盖），
-  每回合重新读取，改完即生效：
+- `manual`（默认）：只有手动 `/memory` 命令触碰记忆库
+- `auto`：会话结束（turn_end）按 token 水位触发，后台便宜模型自动 record + verify
+
+auto 配置在 `.pi/settings.json` 的 `pi-lazy-evo` 命名空间（全局 settings 与项目合并，
+项目覆盖；每次读取实时生效，改完即用）：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
+| `mode` | `manual` | 运行挡位 |
 | `autoWatermarkTokens` | 64000 | 会话新增 token 达此值触发一次，越小越勤 |
-| `autoModel.provider` / `.id` | （无） | 后台便宜模型，缺省用主会话模型 |
-| `autoModel.thinking` | `low` | 思考档（off/low/medium…） |
-| `autoMaxTurns` | 12 | 单个 worker 轮数上限（成本保护） |
+| `autoModel` | 缺省用主会话模型 | `provider` / `id` / `thinking`（默认 `low`） |
+| `autoMaxTurns` | 12 | worker 轮数上限（成本保护） |
 | `autoMemoTools` | read,grep,ls,bash,write,edit | record worker 工具白名单 |
-| `autoVerifyTools` | 上表 + web_search,web_fetch | verify worker 工具白名单 |
+| `autoVerifyTools` | 左列 + web_search,web_fetch | verify worker 工具白名单 |
 
 ```jsonc
 {"pi-lazy-evo": {
@@ -50,27 +41,34 @@
 }}
 ```
 
-注意：工具白名单是**替换**语义，别漏 read/grep/write；验证 worker 的联网工具需先
-`/web-tools` 配好搜索 provider。
+白名单是**替换**语义：填了就按填的来，别漏 read/grep/write。联网验证依赖搜索 provider，
+先 `/web-tools` 配好再开 auto。
 
 ## 门控四态
 
-每张实体按"最新验证记录时间 vs 正文修改时间"得四态：
+实体没有"信任"字段，信任由最新验证记录推导。每张实体按「最新记录 checked_at vs
+正文修改时间」得四态：
 
-| 状态 | 含义 | 对待 |
+| 状态 | 含义 | 怎么用 |
 |---|---|---|
-| ✅ passed | 核对通过且正文未改 | 当事实用 |
-| ⚠️ failed | 核对失败 | 别用，可复验 |
-| ❓ unverified | 从没核过 | 慎用，关键依据先补验 |
-| ⏳ stale | 正文改过，旧核对失效 | 先复验再信 |
+| ✅ passed | 验证通过且正文未改 | 当事实用 |
+| ⚠️ failed | 验证失败 | 别用，可复验 |
+| ❓ unverified | 从没验证过 | 先验再信 |
+| ⏳ stale | 正文改过，旧验证失效 | 先验再信 |
 
-正文更新无需删验证记录——时间戳规则自动降为 stale。
+改正文不用删验证记录——记录只追加，时间戳规则自动把实体降为 stale。
 
-## 记忆库与 git
+## 验证记录
 
-`.memory/` 在当前工作目录（`MEMORY_DIR` 环境变量可覆盖）：`entities/` 实体卡片 +
-`verifications/` 只追加验证流水账。运行时数据不入 git（.gitignore 默认忽略）。
+每次验证追加一条 `verifications/` 下的记录：front-matter 四字段（target / validator /
+checked_at / result），证据写在正文、必填。记录只追加不覆盖，历史可审计。
+验证器取值见 `extension/protocol/verifications.md`，代理按手册执行，用户不直接操作。
+
+## 记忆库
+
+`.memory/` 默认在当前工作目录（`MEMORY_DIR` 可覆盖），`entities/` 实体卡片 +
+`verifications/` 验证流水账，默认不入 git、不随仓库分发。
 
 ## 安装
 
-见 [README](../README.md)：把本仓库 `extension/` 软链到全局或项目扩展位，pi 自动加载。
+见 [README](../README.md)：把 `extension/` 软链到全局或项目扩展位。
