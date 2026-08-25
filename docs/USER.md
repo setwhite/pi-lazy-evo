@@ -29,8 +29,8 @@
 
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库。
 - `auto`：后台便宜模型按 token 水位自动 record + verify。配置在
-  `.pi/settings.json` 的 `lazy-memory` 命名空间（全局 `~/.pi/agent/settings.json` 与项目合并，项目覆盖），
-  每回合重新读取，改完即生效）：
+  `.pi/settings.json` 的 `pi-lazy-evo` 命名空间（全局 `~/.pi/agent/settings.json` 与项目合并，项目覆盖），
+  每回合重新读取，改完即生效：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -42,7 +42,7 @@
 | `autoVerifyTools` | 上表 + web_search,web_fetch | verify worker 工具白名单 |
 
 ```jsonc
-{"lazy-memory": {
+{"pi-lazy-evo": {
   "mode": "auto",
   "autoWatermarkTokens": 30000,
   "autoModel": {"provider": "openrouter", "id": "gpt-4o-mini", "thinking": "low"},
@@ -73,5 +73,5 @@
 
 ## 安装
 
-软链到 `~/.pi/agent/extensions/lazy-memory`（全局，所有项目生效）或项目
-`.pi/extensions/lazy-memory`（仅当前项目，如本仓库自用），指向本仓库 `extension/`，pi 自动加载。
+软链到 `~/.pi/agent/extensions/pi-lazy-evo`（全局，所有项目生效）或项目
+`.pi/extensions/pi-lazy-evo`（仅当前项目，如本仓库自用），指向本仓库 `extension/`，pi 自动加载。

@@ -22,7 +22,7 @@ let cwd: string;
 let mem: string;
 
 beforeEach(() => {
-	cwd = mkdtempSync(join(tmpdir(), "lazy-memory-store-"));
+	cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-store-"));
 	mem = join(cwd, ".memory");
 	process.env.MEMORY_DIR = mem;
 });

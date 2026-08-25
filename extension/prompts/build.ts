@@ -18,7 +18,7 @@ function refLine(protocolDir: string, task: AgentTask): string {
 export function buildAgentPrompt(task: AgentTask, protocolDir: string): string {
 	const refs = refLine(protocolDir, task);
 	const head = refs ? `若本会话尚未读过 ${refs}，先读；已读过则直接按协议执行，不要重复读取。然后：` : "";
-	const parts = [`[lazy-memory] 收到记忆库操作请求。${head}${task.instructions}`];
+	const parts = [`[pi-lazy-evo] 收到记忆库操作请求。${head}${task.instructions}`];
 	if (task.material) parts.push(task.material);
 	return parts.join("\n");
 }
@@ -31,7 +31,7 @@ export function injectTask(runtime: Runtime, task: AgentTask): void {
 /** 子进程系统提示（auto 挡 worker 用） */
 export function buildWorkerPrompt(task: AgentTask, protocolDir: string, cwd: string, maxTurns: number): string {
 	const parts = [
-		`你是 lazy-memory 后台代理。操作位于 ${memoryDir(cwd)} 的记忆库（使用绝对路径）。`,
+		`你是 pi-lazy-evo 后台代理。操作位于 ${memoryDir(cwd)} 的记忆库（使用绝对路径）。`,
 		`- 协议：操作前先读 ${refLine(protocolDir, task)}。`,
 		`- 任务：${task.instructions}`,
 	];

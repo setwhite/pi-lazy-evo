@@ -1,5 +1,5 @@
 /**
- * 配置读取/写入：settings.json 的 lazy-memory 命名空间。
+ * 配置读取/写入：settings.json 的 pi-lazy-evo 命名空间。
  * 全局（~/.pi/agent/settings.json）与项目（<cwd>/.pi/settings.json）合并，项目覆盖全局。
  * 模式切换只写 settings.json——模型可见面（工具集/描述/提示词）不变，不影响 prompt cache。
  * auto 相关配置（阈值/模型）手动编辑 settings.json（参考 pi-observational-memory 的配置形态）。
@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 /** 扩展命名空间名 */
-const NAMESPACE = "lazy-memory";
+const NAMESPACE = "pi-lazy-evo";
 
 /** 运行模式：manual = 仅手动命令；auto = 命令 + 后台自动 record/verify */
 export type MemoryMode = "manual" | "auto";

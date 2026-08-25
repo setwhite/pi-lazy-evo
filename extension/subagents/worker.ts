@@ -78,7 +78,7 @@ export function formatChanges(kind: WorkerKind, changes: LibraryChanges): string
 
 /** 组装子进程调用参数并落盘提示词文件（参数组装可测；spawn 由调用方执行） */
 export function buildAutoWorkerArgs(input: { model?: AutoModel; tools: string[]; promptContent: string }): { command: string; args: string[]; promptFile: string; promptDir: string } {
-	const promptDir = mkdtempSync(join(tmpdir(), "lazy-memory-auto-"));
+	const promptDir = mkdtempSync(join(tmpdir(), "pi-lazy-evo-auto-"));
 	const promptFile = join(promptDir, "worker.md");
 	writeFileSync(promptFile, input.promptContent, "utf8");
 	const args = ["--mode", "json", "-p", "--no-session"];

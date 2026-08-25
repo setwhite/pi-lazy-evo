@@ -1,5 +1,5 @@
 /**
- * lazy-memory 扩展入口：装配 Runtime，注册命令与 auto 钩子（turn_end 时钟 + token 水位）。
+ * pi-lazy-evo 扩展入口：装配 Runtime，注册命令与 auto 钩子（turn_end 时钟 + token 水位）。
  * Runtime 与入口同文件：抽象层足够薄（协议路径 + dispatch 注入），分文件解耦没有必要。
  * 零工具注入：模型用通用工具操作 .memory/，protocol/ 为唯一真相源。
  */

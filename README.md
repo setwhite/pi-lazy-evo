@@ -1,6 +1,6 @@
-# lazy-memory
+# pi-lazy-evo
 
-一个"懒惰"的 AI 记忆库：**被动记录、grep 检索、验证门控**。
+一个"懒惰"的 AI 记忆库：**被动记录、grep 检索、验证门控，可选 auto 挡自动沉淀验证**。
 
 > 你没有存记忆的意识，就不会有记忆。
 
@@ -20,7 +20,7 @@
 
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库。
 - `auto`：后台便宜模型按 token 水位自动沉淀 + 验证（turn_end 双 worker），配置在
-  项目 `.pi/settings.json` 的 `lazy-memory` 命名空间，详见 [docs/USER.md](docs/USER.md)。
+  项目 `.pi/settings.json` 的 `pi-lazy-evo` 命名空间，详见 [docs/USER.md](docs/USER.md)。
 
 ## 文档
 
@@ -36,7 +36,7 @@
 
 ## 安装
 
-软链到 `~/.pi/agent/extensions/lazy-memory`（全局）或项目 `.pi/extensions/lazy-memory`（仅当前项目），
+软链到 `~/.pi/agent/extensions/pi-lazy-evo`（全局）或项目 `.pi/extensions/pi-lazy-evo`（仅当前项目），
 指向本仓库 `extension/`，pi 自动加载。
 记忆库默认在当前工作目录 `.memory/`（`MEMORY_DIR` 环境变量可覆盖）。
 

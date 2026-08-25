@@ -91,4 +91,5 @@ tools 最底层（对 store 仅 type-only）。
 
 - [x] 清理 v1 机外副本（`.pi/skills/lazy-memory/`）
 - [x] 推送到 GitHub（origin/main 已同步）
+- [x] 项目更名为 pi-lazy-evo（settings 命名空间 / 提示词 / 安装位同步）
 - [ ] 全局安装位软链（当前以项目位 `.pi/extensions/` 安装）

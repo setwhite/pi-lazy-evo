@@ -42,7 +42,7 @@ afterEach(() => {
 
 /** 组装隔离会话（每用例一个新会话，无共享状态） */
 function createSession(): Session {
-	const cwd = mkdtempSync(join(tmpdir(), "lazy-memory-commands-"));
+	const cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-commands-"));
 	process.env.MEMORY_DIR = join(cwd, ".memory");
 	mkdirSync(join(cwd, ".pi"), { recursive: true });
 	const notified: string[] = [];
@@ -143,7 +143,7 @@ describe("/memory record / query", () => {
 	it("record 注入记录提醒", async () => {
 		const s = createSession();
 		await s.run("record");
-		expect(s.sent.at(-1)!).toContain("[lazy-memory]");
+		expect(s.sent.at(-1)!).toContain("[pi-lazy-evo]");
 		expect(s.sent.at(-1)!).toContain("长期结论");
 	});
 

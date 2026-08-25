@@ -1,5 +1,5 @@
 {
-  "name": "lazy-memory",
+  "name": "pi-lazy-evo",
   "scripts": {
     "test": "bun test",
     "typecheck": "bunx tsc -p tsconfig.json"

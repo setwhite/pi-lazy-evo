@@ -152,7 +152,7 @@ describe("buildAutoWorkerArgs", () => {
 describe("库快照 diff", () => {
 	let cwd: string;
 	beforeEach(() => {
-		cwd = mkdtempSync(join(tmpdir(), "lazy-memory-diff-"));
+		cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-diff-"));
 		process.env.MEMORY_DIR = join(cwd, ".memory");
 	});
 	afterEach(() => {

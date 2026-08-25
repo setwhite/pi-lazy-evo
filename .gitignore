@@ -4,5 +4,5 @@
 # 依赖（bun 安装产物），不入库
 node_modules/
 
-# 本机安装产物（.pi/extensions/lazy-memory 符号链接 → extension/）
+# 本机安装产物（.pi/extensions/pi-lazy-evo 符号链接 → extension/）
 .pi/extensions/

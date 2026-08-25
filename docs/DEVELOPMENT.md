@@ -23,6 +23,7 @@ bun run typecheck   # tsc strict，零错误
 - `core/store.ts` 是 barrel，存储子域在 entities / verifications / layout
 - `prompts/tasks.ts` 任务纯数据 + `build.ts` 组装注入；手动命令与 auto worker 共用同一任务语义
 - `commands/` 只做"解析输入 → 调 core/prompts → 通知"，业务聚合提纯到 gate
+- settings 命名空间统一用 `pi-lazy-evo`（`core/config.ts` 的 NAMESPACE），测试断言同步
 
 ## 新增子命令
 
@@ -42,6 +43,6 @@ bun run typecheck   # tsc strict，零错误
 |---|---|
 | store.test.ts | 存储域：实体/验证记录读写、严格性、整库配对 |
 | gate.test.ts | 门控聚合纯函数 |
-| config.test.ts | settings.json 读写 |
+| config.test.ts | settings.json 读写（pi-lazy-evo 命名空间） |
 | commands.test.ts | 命令注册、路由、两级补全、注入（独立会话工厂） |
 | subagents.test.ts | auto 判定、素材抽取、提示词组装、库快照 diff |
