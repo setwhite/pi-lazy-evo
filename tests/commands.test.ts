@@ -9,10 +9,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerMemoryCommands } from "../commands.ts";
-import { buildAgentPrompt, queryTask, recordTask, verifyTask } from "../prompts.ts";
-import { appendVerification, writeEntity } from "../store.ts";
-import { Runtime } from "../index.ts";
+import { registerMemoryCommands } from "../extension/commands.ts";
+import { buildAgentPrompt, queryTask, recordTask, verifyTask } from "../extension/prompts.ts";
+import { appendVerification, writeEntity } from "../extension/store.ts";
+import { Runtime } from "../extension/index.ts";
 
 const GLOBAL_SETTINGS_ENV = "PI_GLOBAL_SETTINGS_FILE";
 

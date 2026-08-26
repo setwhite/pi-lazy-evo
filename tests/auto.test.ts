@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, closeOutcome, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary } from "../auto.ts";
-import { buildAgentPrompt, buildWorkerPrompt, extractTranscript, recordTask, verifyTask } from "../prompts.ts";
-import { appendVerification, memoryDir, writeEntity } from "../store.ts";
+import { buildAutoWorkerArgs, closeOutcome, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary } from "../extension/auto.ts";
+import { buildAgentPrompt, buildWorkerPrompt, extractTranscript, recordTask, verifyTask } from "../extension/prompts.ts";
+import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
 
 /** 收集本次用例生成的临时 worker 目录，统一清理 */
 const tempDirs: string[] = [];

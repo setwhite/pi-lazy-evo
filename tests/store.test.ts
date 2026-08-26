@@ -14,8 +14,8 @@ import {
 	readEntity,
 	readLibrary,
 	writeEntity,
-} from "../store.ts";
-import { validateId, validateKind } from "../utils.ts";
+} from "../extension/store.ts";
+import { validateId, validateKind } from "../extension/utils.ts";
 
 let cwd: string;
 let mem: string;

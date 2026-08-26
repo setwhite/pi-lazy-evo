@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, setMode } from "../config.ts";
+import { loadConfig, setMode } from "../extension/config.ts";
 
 /** 全局 settings 环境变量名（与 config.ts 的注入点同名） */
 const GLOBAL_SETTINGS_ENV = "PI_GLOBAL_SETTINGS_FILE";
