@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary } from "../auto.ts";
+import { buildAutoWorkerArgs, closeOutcome, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary } from "../auto.ts";
 import { buildAgentPrompt, buildWorkerPrompt, extractTranscript, recordTask, verifyTask } from "../prompts.ts";
 import { appendVerification, memoryDir, writeEntity } from "../store.ts";
 
@@ -198,5 +198,21 @@ describe("formatChanges", () => {
 		};
 		expect(formatChanges("verify", changes)).toBe("+ 验证：a ✅, b ⚠️");
 		expect(formatChanges("verify", { addedEntities: [], updatedEntities: [], newVerifications: [] })).toBe("无变化");
+	});
+});
+
+describe("closeOutcome", () => {
+	it("正常退出（code 0）：无文本时用兜底文案", () => {
+		expect(closeOutcome({ code: 0, hitLimit: false, lastAssistant: "done" })).toEqual({ ok: true, text: "done" });
+		expect(closeOutcome({ code: 0, hitLimit: false, lastAssistant: "" })).toEqual({ ok: true, text: "已执行（无文本输出）" });
+	});
+
+	it("命中轮数上限被 SIGKILL（code null）算正常结束，不误报失败", () => {
+		expect(closeOutcome({ code: null, hitLimit: true, lastAssistant: "部分完成" })).toEqual({ ok: true, text: "部分完成" });
+		expect(closeOutcome({ code: null, hitLimit: true, lastAssistant: "" })).toEqual({ ok: true, text: "已达轮数上限（无文本输出）" });
+	});
+
+	it("非零退出码判失败", () => {
+		expect(closeOutcome({ code: 1, hitLimit: false, lastAssistant: "" })).toEqual({ ok: false, text: "worker 退出码 1" });
 	});
 });

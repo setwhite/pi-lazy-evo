@@ -178,6 +178,13 @@ interface SpawnInput {
 	maxTurns: number;
 }
 
+/** close 事件收尾判定：命中轮数上限（被 SIGKILL，退出码为 null）算正常结束，不能按非零退出码判失败 */
+export function closeOutcome(input: { code: number | null; hitLimit: boolean; lastAssistant: string }): { ok: boolean; text: string } {
+	if (input.hitLimit) return { ok: true, text: input.lastAssistant || "已达轮数上限（无文本输出）" };
+	if (input.code !== 0) return { ok: false, text: `worker 退出码 ${input.code}` };
+	return { ok: true, text: input.lastAssistant || "已执行（无文本输出）" };
+}
+
 /** spawn pi 子进程（headless），收集输出返回最终 assistant 文本。
  * 轮数上限是硬约束：数 assistant message_end 事件，达到 maxTurns 立即 SIGKILL。 */
 async function spawnWorker(input: SpawnInput): Promise<string> {
@@ -220,12 +227,12 @@ async function spawnWorker(input: SpawnInput): Promise<string> {
 		});
 		proc.on("close", (code) => {
 			clearTimeout(timer);
-			if (code !== 0) {
-				reject(new Error(`worker 退出码 ${code}${stderr ? `：${stderr.slice(0, 200)}` : ""}`));
+			const outcome = closeOutcome({ code, hitLimit, lastAssistant });
+			if (!outcome.ok) {
+				reject(new Error(`${outcome.text}${stderr ? `：${stderr.slice(0, 200)}` : ""}`));
 				return;
 			}
-			const fallback = hitLimit ? "已达轮数上限（无文本输出）" : "已执行（无文本输出）";
-			resolve(lastAssistant || fallback);
+			resolve(outcome.text);
 		});
 		proc.on("error", (err) => {
 			clearTimeout(timer);
