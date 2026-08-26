@@ -11,11 +11,16 @@
 |---|---|
 | target | entities/<id>.md |
 | validator | 见下方验证器 |
-| checked_at | ISO 时间戳 |
+| checked_at | 当前真实时间的 ISO 时间戳（见时间戳纪律） |
 | result | passed / failed |
 
 front-matter 恰好这四个字段。记录正文（front-matter 之外的全部内容）是证据——
 自由文本，承载可复核依据（来源、命令输出、用户的原话）。证据必填：没有正文的记录不算验证。
+
+**时间戳纪律（硬约束）**：checked_at 是门控（stale 判定）的唯一时间依据，必须写
+执行验证那一刻的**真实当前时间**——追加记录前先运行 `date` 命令取系统时间，原样填入
+（保留时区）。禁止推断、回溯、占位或任何形式的编造：错误时间戳会把实体永远钉在
+stale（重复验证、记录堆积），或让过期验证冒充新鲜异象，两种情况都污染门控。
 
 不合规的记录（target 不是 entities/<id>.md、result 非法、checked_at 非 ISO）会被扩展忽略。
 
