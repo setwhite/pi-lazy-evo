@@ -9,10 +9,9 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerMemoryCommands } from "../commands/index.ts";
-import { recordTask, queryTask, verifyTask } from "../prompts/tasks.ts";
-import { buildAgentPrompt } from "../prompts/build.ts";
-import { appendVerification, writeEntity } from "../core/store.ts";
+import { registerMemoryCommands } from "../commands.ts";
+import { buildAgentPrompt, queryTask, recordTask, verifyTask } from "../prompts.ts";
+import { appendVerification, writeEntity } from "../store.ts";
 import { Runtime } from "../index.ts";
 
 /** 命令定义（与 pi 的注册结构对齐） */

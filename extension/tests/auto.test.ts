@@ -1,17 +1,14 @@
 /**
- * subagents（auto 自动挡）单元测试：只测纯函数（触发判定 / 素材抽取 / 提示词与参数组装），
+ * auto 自动挡单元测试：只测纯函数（触发判定 / 素材抽取 / 提示词与参数组装），
  * 不真正 spawn pi 子进程。覆盖四态判定、compaction 回落、防并发、模型参数。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decideAutoTrigger, INITIAL_AUTO_STATE } from "../subagents/auto.ts";
-import { extractTranscript, recordTask, verifyTask } from "../prompts/tasks.ts";
-import { buildAgentPrompt, buildWorkerPrompt } from "../prompts/build.ts";
-import { buildAutoWorkerArgs, diffLibrary, formatChanges, snapshotLibrary } from "../subagents/worker.ts";
-import { memoryDir } from "../core/layout.ts";
-import { appendVerification, writeEntity } from "../core/store.ts";
+import { buildAutoWorkerArgs, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary } from "../auto.ts";
+import { buildAgentPrompt, buildWorkerPrompt, extractTranscript, recordTask, verifyTask } from "../prompts.ts";
+import { appendVerification, memoryDir, writeEntity } from "../store.ts";
 
 /** 收集本次用例生成的临时 worker 目录，统一清理 */
 const tempDirs: string[] = [];

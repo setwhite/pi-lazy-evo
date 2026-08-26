@@ -15,23 +15,27 @@
 ```
 extension/
 ├── index.ts         # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令 + auto 钩子
-├── core/            # config 配置 / store 存储（entities·verifications·layout 子域）/ gate 门控聚合
-├── prompts/         # tasks 任务纯数据 + build 提示词组装注入
-├── commands/        # 单一 /memory 入口 + 子命令表（路由/帮助/补全单一数据源）
-├── subagents/       # auto 挡：turn_end 水位判定 + 串行编排 + spawn worker 子进程
-├── tools/           # 确定性小工具：validate / 单实体门控 / notify / frontmatter / 文本提取
+├── commands.ts      # 单一 /memory 入口：子命令表（路由/帮助/补全单一数据源）+ 6 个子命令
+├── auto.ts          # auto 挡：turn_end 水位判定 + 串行编排 + spawn worker 子进程 + 快照 diff
+├── prompts.ts       # 代理任务纯数据（AgentTask）+ 提示词组装注入（主会话/worker 共用）
+├── store.ts         # 存储域：布局 / 实体 / 验证记录 / 全库配对
+├── gate.ts          # 门控域：单实体四态判定 / 批量门控 / 待验筛选 / 全库摘要
+├── config.ts        # settings 命名空间读写（pi-lazy-evo）
+├── utils.ts         # 纯工具：frontmatter / 校验 / 文本提取 / 通知
 ├── tests/           # bun:test 单元测试（按域拆分）
 └── protocol/        # 协议手册（代理执行契约）
 ```
 
-依赖方向 `index → commands/subagents → prompts → {core, tools}`；tools 最底层，对 store 仅 type-only。
+依赖方向 `index → {commands, auto} → {prompts, gate, store} → utils`；utils 最底层
+（纯工具，无 IO 无业务），store 不依赖上层。
 
 模块边界：
 
-- `commands/` 只做"解析输入 → 调 core/prompts → 通知"，业务聚合在 core 的 gate；
-- `prompts/tasks.ts` 是任务纯数据（要代理干什么），`build.ts` 负责组装注入，
+- `commands.ts` 只做"解析输入 → 调 gate/prompts → 通知"，业务聚合在 gate；
+- `prompts.ts` 是任务纯数据（要代理干什么）+ 组装注入，
   手动命令（主会话）与 auto worker（子进程）共用同一套任务语义；
-- `core/store.ts` 是存储 barrel，实体 / 验证 / 布局子域各自成文件。
+- `auto.ts` 只做触发编排（水位判定 → 串行双任务）与子进程通道，任务语义来自 prompts；
+- `store.ts` 一个文件承载存储域（布局 / 实体 / 验证记录 / 全库配对），读取层"尽力解析 + 非法忽略"。
 
 ## 数据模型
 

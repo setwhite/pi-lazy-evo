@@ -1,14 +1,18 @@
 /**
- * 代理任务："要代理干什么"的纯数据描述。
- * 提示词生成（build.ts）与两条执行通道（commands 主会话 / subagents worker 子进程）
- * 都从任务出发——手动命令与自动挡共用同一组任务语义，不再各自维护一套。
+ * 代理任务与提示词：手动命令（主会话注入）与 auto 挡（worker 子进程）共用同一任务语义。
+ * AgentTask 是"要代理干什么"的纯数据；组装函数负责拼成提示词文本并注入。
  */
-import { GATE_LABEL, type GateState, type PendingEntity } from "../core/gate.ts";
-import { messageText } from "../tools/text.ts";
+import { join } from "node:path";
+import { GATE_LABEL, type GateState, type PendingEntity } from "./gate.ts";
+import { memoryDir } from "./store.ts";
+import { messageText } from "./utils.ts";
+import type { Runtime } from "./index.ts";
 
-/** 代理任务：按序阅读的格式文件 + 操作手册 + 任务指令 + 附带素材 */
+// ---- 任务定义 ----
+
+/** 代理任务：按序阅读的格式手册 + 操作手册 + 任务指令 + 附带素材 */
 export interface AgentTask {
-	/** 格式文件（相对 protocolDir）：entities.md / verifications.md（query 不读，为空） */
+	/** 格式手册（相对 protocolDir）：entities.md / verifications.md（query 不读，为空） */
 	formats: string[];
 	/** 操作手册（相对 protocolDir）：record.md / verify.md（query 不读，为空） */
 	manuals: string[];
@@ -29,7 +33,7 @@ export function recordTask(transcript?: string): AgentTask {
 	};
 }
 
-/** 验证任务：核对清单实体（手动命令与自动挡都注入算好的清单，同一筛选） */
+/** 验证任务：核对清单实体（手动命令与 auto 挡都注入算好的清单，同一筛选） */
 export function verifyTask(pending: PendingEntity[]): AgentTask {
 	return {
 		formats: ["entities.md", "verifications.md"],
@@ -49,7 +53,7 @@ export interface QueryIndexEntry {
 	path: string;
 }
 
-/** 检索任务：注入全库索引（门控预计算）；grep 与判相关交给代理自带工具 */
+/** 检索任务：注入全库索引（门控预计算）；grep 与相关性判断交给代理自带工具 */
 export function queryTask(terms: string, index: QueryIndexEntry[]): AgentTask {
 	const entries = index.map((e) => `- ${e.id} [${e.kind}] ${GATE_LABEL[e.state]} — ${e.path}`).join("\n");
 	return {
@@ -62,6 +66,8 @@ export function queryTask(terms: string, index: QueryIndexEntry[]): AgentTask {
 		material: `检索词：${terms || "未给出——从最近对话推断检索意图。"}\n记忆库索引（门控状态由扩展预计算）：\n${entries}`,
 	};
 }
+
+// ---- 会话素材抽取 ----
 
 /** 会话条目最小结构：只取 type 与可选 message（与 pi 的 SessionEntry 结构兼容） */
 export interface TranscriptEntry {
@@ -84,4 +90,37 @@ export function extractTranscript(entries: readonly TranscriptEntry[], limit = T
 			return `${m.role ?? "unknown"}: ${messageText(m.content)}`.slice(0, MESSAGE_TEXT_MAX);
 		});
 	return messages.join("\n\n");
+}
+
+// ---- 提示词组装与注入 ----
+
+/** 手册引用行：格式手册 + 操作手册绝对路径，按序阅读 */
+function refLine(protocolDir: string, task: AgentTask): string {
+	return [...task.formats, ...task.manuals].map((f) => join(protocolDir, f)).join(", ");
+}
+
+/** 主会话注入消息（/memory 命令用）：已读手册不重复读 */
+export function buildAgentPrompt(task: AgentTask, protocolDir: string): string {
+	const refs = refLine(protocolDir, task);
+	const head = refs ? `若本会话尚未读过 ${refs}，先读；已读则直接按协议执行，不要重复读取。然后：` : "";
+	const parts = [`[pi-lazy-evo] 收到记忆库操作请求。${head}${task.instructions}`];
+	if (task.material) parts.push(task.material);
+	return parts.join("\n");
+}
+
+/** 主会话注入通道：任务 → 提示词 → dispatch 唤醒主会话代理（手动 /memory 命令用） */
+export function injectTask(runtime: Runtime, task: AgentTask): void {
+	runtime.dispatch(buildAgentPrompt(task, runtime.protocolDir));
+}
+
+/** 子进程系统提示（auto 挡 worker 用）：独立上下文，自含角色/记忆库根/轮数约束 */
+export function buildWorkerPrompt(task: AgentTask, protocolDir: string, cwd: string, maxTurns: number): string {
+	const parts = [
+		`你是 pi-lazy-evo 后台代理。操作位于 ${memoryDir(cwd)} 的记忆库（使用绝对路径）。`,
+		`- 协议：操作前先读 ${refLine(protocolDir, task)}。`,
+		`- 任务：${task.instructions}`,
+	];
+	if (task.material) parts.push(`- 素材：\n${task.material}`);
+	parts.push(`- 约束：最多 ${maxTurns} 轮精简回复；不得触碰 .memory/ 以外的任何内容；结束时用一句话总结。`);
+	return parts.join("\n");
 }

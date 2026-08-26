@@ -1,18 +1,18 @@
 /**
- * pi-lazy-evo 扩展入口：装配 Runtime，注册命令与 auto 钩子（turn_end 时钟 + token 水位）。
- * Runtime 与入口同文件：抽象层足够薄（协议路径 + dispatch 注入），分文件解耦没有必要。
- * 零工具注入：模型用通用工具操作 .memory/，protocol/ 为唯一真相源。
+ * pi-lazy-evo 扩展入口：装配 Runtime（协议路径 + 派发通道 + 会话 cwd），
+ * 注册 /memory 命令与 auto 挡钩子。
+ * 零工具注入：模型用通用工具（grep/read/write/bash）按 protocol 手册操作 .memory/。
  */
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerMemoryCommands } from "./commands/index.ts";
-import { registerAutoModeHooks } from "./subagents/auto.ts";
+import { registerMemoryCommands } from "./commands.ts";
+import { registerAutoModeHooks } from "./auto.ts";
 
-/** 协议手册默认位置：与扩展源码同目录。bun 按真实路径加载（软链解析后指向仓库 extension/），
+/** 协议手册目录：与扩展源码同目录。bun 按真实路径加载（软链解析后指向仓库 extension/），
  * protocol/ 随仓库分发，安装位与仓库分离后此路径依然成立。 */
 const PROTOCOL_DIR = join(import.meta.dirname, "protocol");
 
-/** 扩展运行时：共享状态与注入通道，依赖注入给命令与 agent，避免模块级全局变量 */
+/** 扩展运行时：共享状态与注入通道，依赖注入给命令与 auto 钩子，避免模块级全局变量 */
 export class Runtime {
 	/** 协议手册目录绝对路径：提示词据此指引模型阅读对应操作手册 */
 	readonly protocolDir: string;

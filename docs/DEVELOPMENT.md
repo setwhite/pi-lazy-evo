@@ -14,15 +14,15 @@ bun run typecheck   # tsc strict，零错误
 
 ## 目录职责
 
-依赖方向 `index → commands/subagents → prompts → {core, tools}`：
+依赖方向 `index → {commands, auto} → {prompts, gate, store} → utils`：
 
-- `tools/` 只放确定性小工具（无 IO 无业务）；整体逻辑在 core
-- `core/store.ts` 是存储 barrel，子域在 entities / verifications / layout
-- `core/gate.ts` 是门控聚合纯函数（批量门控、待验筛选、全库摘要）；单实体判定在 tools/gate.ts
-- `prompts/tasks.ts` 任务纯数据（AgentTask）+ `build.ts` 组装注入；手动命令与 auto worker 共用同一任务语义
-- `commands/` 只做"解析输入 → 调 core/prompts → 通知"，业务聚合在 gate
-- `subagents/auto.ts` turn_end 水位判定 + 串行编排；`worker.ts` spawn 子进程 + 库快照 diff
-- settings 命名空间统一 `pi-lazy-evo`（`core/config.ts` 的 NAMESPACE，测试断言同步）
+- `utils.ts` 只放确定性小工具（frontmatter / 校验 / 文本提取 / 通知，无 IO 无业务）
+- `store.ts` 存储域整体（布局 / 实体 / 验证记录 / 全库配对），读取层"尽力解析 + 非法忽略"
+- `gate.ts` 门控域纯函数（单实体四态判定 / 批量门控 / 待验筛选 / 全库摘要）
+- `prompts.ts` 任务纯数据（AgentTask）+ 组装注入；手动命令与 auto worker 共用同一任务语义
+- `commands.ts` 只做"解析输入 → 调 gate/prompts → 通知"，业务聚合在 gate
+- `auto.ts` 水位判定 + 串行编排 + spawn 子进程 + 库快照 diff
+- settings 命名空间统一 `pi-lazy-evo`（`config.ts` 的 NAMESPACE，测试断言同步）
 
 ## 编码约定
 
@@ -33,9 +33,9 @@ bun run typecheck   # tsc strict，零错误
 
 所有子命令挂在唯一 `memory` 入口（pi 派发只匹配第一词）。新增 `/memory foo`：
 
-1. 新建 `commands/foo.ts`：导出 `foo(args, ctx, runtime)`（统一签名，展示类命令忽略 runtime）
-2. 在 `commands/index.ts` 的 `SUBCOMMANDS` 表加一条（含 handler）；需参数补全时给 `argValues`
-   （静态列表，或动态候选函数，如 verify 读库列实体 id）
+1. 在 `commands.ts` 的 `SUBCOMMANDS` 表加一条：导出 `foo(args, ctx, runtime)`（统一签名，
+   展示类命令忽略 runtime），写入同文件
+2. 需参数补全时给 `argValues`（静态列表，或动态候选函数，如 verify 读库列实体 id）
 3. 在 `tests/commands.test.ts` 加用例；`docs/USER.md` 补用法
 
 需"读库→门控→注入"的命令参照 verify：
@@ -61,4 +61,4 @@ bun run typecheck   # tsc strict，零错误
 | gate.test.ts | 门控聚合纯函数（含 3s 容差） |
 | config.test.ts | settings.json 读写（pi-lazy-evo 命名空间） |
 | commands.test.ts | 命令注册、路由、两级补全、注入（独立会话工厂） |
-| subagents.test.ts | auto 判定、素材抽取、提示词组装、库快照 diff |
+| auto.test.ts | auto 判定、素材抽取、提示词组装、库快照 diff |

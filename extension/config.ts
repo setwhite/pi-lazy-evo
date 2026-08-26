@@ -1,12 +1,11 @@
 /**
- * 配置读取/写入：settings.json 的 pi-lazy-evo 命名空间。
+ * 配置读写：settings.json 的 pi-lazy-evo 命名空间。
  * 全局（~/.pi/agent/settings.json）与项目（<cwd>/.pi/settings.json）合并，项目覆盖全局。
  * 模式切换只写 settings.json——模型可见面（工具集/描述/提示词）不变，不影响 prompt cache。
- * auto 相关配置（阈值/模型）手动编辑 settings.json（参考 pi-observational-memory 的配置形态）。
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** 扩展命名空间名 */
 const NAMESPACE = "pi-lazy-evo";
@@ -26,7 +25,7 @@ export interface AutoModel {
 
 /** record worker 默认工具白名单：读库/检索/写库够用，不放开联网 */
 const DEFAULT_MEMO_TOOLS = ["read", "grep", "ls", "bash", "write", "edit"] as const;
-/** 验证 worker 默认工具白名单：多 web 检索，支持 web-research 验证器 */
+/** 验证 worker 默认工具白名单：多 web 检索，支持 web 验证器 */
 const DEFAULT_VERIFY_TOOLS = [...DEFAULT_MEMO_TOOLS, "web_search", "web_fetch"] as const;
 
 /** 扩展配置 */
@@ -88,10 +87,7 @@ const FIELD_PARSERS: Record<keyof MemorySettings, (value: unknown) => unknown> =
 	autoVerifyTools: parseTools,
 };
 
-/** 全字段键表：解析与合并共用（与 FIELD_PARSERS 一一对应） */
-const FIELD_KEYS = Object.keys(FIELD_PARSERS) as (keyof MemorySettings)[];
-
-/** 解析单个 settings.json 中的命名空间为配置片段；失败或缺命名空间返回 null */
+/** 解析单个 settings.json 中的命名空间为配置片段；读取失败或缺命名空间返回 null */
 function readNamespace(path: string): Partial<MemorySettings> | null {
 	let raw: unknown;
 	try {
@@ -110,32 +106,28 @@ function readNamespace(path: string): Partial<MemorySettings> | null {
 	return Object.fromEntries(entries) as Partial<MemorySettings>;
 }
 
-/** 把片段中的非空字段合并进配置（undefined 保持现值） */
-function applyNamespace(merged: MemorySettings, ns: Partial<MemorySettings>): void {
-	const target = merged as unknown as Record<string, unknown>;
-	for (const key of FIELD_KEYS) {
-		if (ns[key] !== undefined) target[key] = ns[key];
-	}
-}
-
 /** 合并全局与项目配置（项目覆盖全局） */
 export function loadConfig(cwd: string): MemorySettings {
 	const merged: MemorySettings = { ...DEFAULTS };
-	const namespaces = [readNamespace(join(homedir(), ".pi", "agent", "settings.json")), readNamespace(join(cwd, ".pi", "settings.json"))];
-	for (const ns of namespaces) {
-		if (ns) applyNamespace(merged, ns);
+	const files = [join(homedir(), ".pi", "agent", "settings.json"), join(cwd, ".pi", "settings.json")];
+	for (const path of files) {
+		const ns = readNamespace(path);
+		if (!ns) continue;
+		for (const key of Object.keys(FIELD_PARSERS) as (keyof MemorySettings)[]) {
+			if (ns[key] !== undefined) (merged as unknown as Record<string, unknown>)[key] = ns[key];
+		}
 	}
 	return merged;
 }
 
-/** 写入模式到项目 settings.json（保留文件其余内容；目录缺失时静默跳过） */
+/** 写入模式到项目 settings.json（保留文件其余内容；文件缺失时按空对象创建） */
 export function setMode(cwd: string, mode: MemoryMode): boolean {
 	const path = join(cwd, ".pi", "settings.json");
 	let data: Record<string, unknown> = {};
 	try {
 		data = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
 	} catch {
-		// 项目 .pi/settings.json 不存在时按空对象处理
+		// 文件不存在或损坏：按空对象处理
 	}
 	data[NAMESPACE] = { ...(typeof data[NAMESPACE] === "object" && data[NAMESPACE] ? (data[NAMESPACE] as Record<string, unknown>) : {}), mode };
 	try {

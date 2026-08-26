@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, setMode } from "../core/config.ts";
+import { loadConfig, setMode } from "../config.ts";
 
 let cwd: string;
 

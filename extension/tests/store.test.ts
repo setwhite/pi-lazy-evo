@@ -13,10 +13,9 @@ import {
 	listVerifications,
 	readEntity,
 	readLibrary,
-	validateId,
-	validateKind,
 	writeEntity,
-} from "../core/store.ts";
+} from "../store.ts";
+import { validateId, validateKind } from "../utils.ts";
 
 let cwd: string;
 let mem: string;
