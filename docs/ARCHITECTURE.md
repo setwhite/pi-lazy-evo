@@ -78,7 +78,7 @@ value 必须带子命令词（如 `mode auto`）。
 - `record [note]`：注入记录任务（note 作为附注素材），代理自行完成读协议 → 检索 → 写入
 - `query [terms]`：扩展算好全库索引（门控态预计算）注入，grep 与相关性判断靠代理自带工具
 - `verify [id]`：读库 → 门控 → `selectPending`（无 id 只选 none/stale，有 id 全量复验）→ 注入清单
-- `mode [auto|manual]`：读写 settings.json 的 `pi-lazy-evo` 命名空间，不改任何模型可见面
+- `mode [auto|manual]`：读写全局 settings.json 的 `pi-lazy-evo` 命名空间（mode 只存全局、不随仓库分发），不改任何模型可见面
 
 手动命令与 auto 挡共用注入链路：`selectPending → verifyTask / recordTask → injectTask`。
 职责边界：`/memory verify` 只把清单算好注入，验证动作本身交给代理执行。
@@ -112,7 +112,7 @@ diff 后一行通知：record 报 `+ 新增 / ~ 更新`，verify 报 `+ 验证�
 | 门控实时计算 | 状态永远由实体 + 验证记录两个唯一真相推出 |
 | 任务语义两条通道共用 | 手动与 auto 同一套 AgentTask，改动只在一处 |
 | query 门控预计算注入 | 死板计算留在扩展代码，代理只做语义判断 |
-| 模式切换只写 settings.json | 工具集/提示词不变，切换不影响 prompt cache |
+| 模式切换只写全局 settings.json | mode 是用户偏好：不入库、不随仓库分发、不被 git 覆盖；工具集/提示词不变，切换不影响 prompt cache |
 
 ## pi 行为事实（SDK 源码验证）
 

@@ -20,19 +20,21 @@
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库
 - `auto`：会话结束（turn_end）按 token 水位触发，后台便宜模型自动 record + verify
 
-auto 配置在 `.pi/settings.json` 的 `pi-lazy-evo` 命名空间（全局 settings 与项目合并，
-项目覆盖；每次读取实时生效，改完即用）：
+auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即用）。分两个来源：
+- **mode** 只存全局 `~/.pi/agent/settings.json`——用户偏好，不入库不随仓库分发；`/memory mode` 切换的就是它
+- 其余字段全局与项目 `.pi/settings.json` 合并，项目覆盖全局
 
-| 字段 | 默认 | 说明 |
-|---|---|---|
-| `mode` | `manual` | 运行挡位 |
-| `autoWatermarkTokens` | 64000 | 会话新增 token 达此值触发一次，越小越勤 |
-| `autoModel` | 缺省用主会话模型 | `provider` / `id` / `thinking`（默认 `low`） |
-| `autoMaxTurns` | 12 | worker 轮数上限（成本保护） |
-| `autoMemoTools` | read,grep,ls,bash,write,edit | record worker 工具白名单 |
-| `autoVerifyTools` | 左列 + web_search,web_fetch | verify worker 工具白名单 |
+| 字段 | 默认 | 存放 | 说明 |
+|---|---|---|---|
+| `mode` | `manual` | 全局 | 运行挡位 |
+| `autoWatermarkTokens` | 64000 | 全局/项目 | 会话新增 token 达此值触发一次，越小越勤 |
+| `autoModel` | 缺省用主会话模型 | 全局/项目 | `provider` / `id` / `thinking`（默认 `low`） |
+| `autoMaxTurns` | 12 | 全局/项目 | worker 轮数上限（成本保护） |
+| `autoMemoTools` | read,grep,ls,bash,write,edit | 全局/项目 | record worker 工具白名单 |
+| `autoVerifyTools` | 左列 + web_search,web_fetch | 全局/项目 | verify worker 工具白名单 |
 
 ```jsonc
+// 全局 ~/.pi/agent/settings.json（mode 唯一存放处）
 {"pi-lazy-evo": {
   "mode": "auto",
   "autoWatermarkTokens": 30000,
@@ -42,7 +44,9 @@ auto 配置在 `.pi/settings.json` 的 `pi-lazy-evo` 命名空间（全局 setti
 ```
 
 白名单是**替换**语义：填了就按填的来，别漏 read/grep/write。联网验证依赖搜索 provider，
-先 `/web-tools` 配好再开 auto。
+先 `/web-tools` 配好再开 auto。未配置 `autoModel` 时切 auto / 看 overview 会提示配置
+（缺省将用主会话模型跑后台任务，注意成本）。全局 settings 路径可用 `PI_GLOBAL_SETTINGS_FILE`
+覆盖（多用户隔离/测试）。
 
 ## 门控四态
 

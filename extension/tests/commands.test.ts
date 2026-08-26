@@ -5,14 +5,16 @@
  * record/query/verify 注入、verify 待验清单计算、mode 查看/切换、提示词构建。
  */
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMemoryCommands } from "../commands.ts";
 import { buildAgentPrompt, queryTask, recordTask, verifyTask } from "../prompts.ts";
 import { appendVerification, writeEntity } from "../store.ts";
 import { Runtime } from "../index.ts";
+
+const GLOBAL_SETTINGS_ENV = "PI_GLOBAL_SETTINGS_FILE";
 
 /** 命令定义（与 pi 的注册结构对齐） */
 interface CommandDef {
@@ -34,15 +36,18 @@ interface Session {
 	complete(prefix: string): { value: string; label: string; description?: string }[] | null;
 }
 
-/** 用例结束后还原 MEMORY_DIR，避免泄漏到其他测试文件（bun:test 单进程运行） */
+/** 用例结束后还原 MEMORY_DIR 与全局 settings 覆盖，避免泄漏到其他测试文件（bun:test 单进程运行） */
 afterEach(() => {
 	delete process.env.MEMORY_DIR;
+	delete process.env[GLOBAL_SETTINGS_ENV];
 });
 
 /** 组装隔离会话（每用例一个新会话，无共享状态） */
 function createSession(): Session {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-commands-"));
+	// 每个会话独立的全局 settings 文件（位于会话私有目录），用例间零残留
 	process.env.MEMORY_DIR = join(cwd, ".memory");
+	process.env[GLOBAL_SETTINGS_ENV] = join(cwd, "global", ".pi", "agent", "settings.json");
 	mkdirSync(join(cwd, ".pi"), { recursive: true });
 	const notified: string[] = [];
 	const sent: string[] = [];
@@ -226,6 +231,23 @@ describe("/memory mode", () => {
 		const s = createSession();
 		await s.run("mode turbo");
 		expect(s.notified.some((t) => t.includes("Usage: /memory mode [auto|manual]"))).toBe(true);
+	});
+
+	it("切 auto 且未配置 autoModel 时提醒配置", async () => {
+		const s = createSession();
+		await s.run("mode auto");
+		expect(s.notified.some((t) => t.includes("Mode switched to auto"))).toBe(true);
+		expect(s.notified.some((t) => t.includes("autoModel"))).toBe(true);
+	});
+
+	it("已配置 autoModel 时切 auto 不重复提醒", async () => {
+		const s = createSession();
+		const global = process.env[GLOBAL_SETTINGS_ENV]!;
+		mkdirSync(dirname(global), { recursive: true });
+		writeFileSync(global, JSON.stringify({ "pi-lazy-evo": { autoModel: { provider: "openrouter", id: "gpt-4o-mini" } } }, null, 2) + "\n");
+		await s.run("mode auto");
+		expect(s.notified.some((t) => t.includes("Mode switched to auto"))).toBe(true);
+		expect(s.notified.some((t) => t.includes("autoModel"))).toBe(false);
 	});
 });
 

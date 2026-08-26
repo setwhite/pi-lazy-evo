@@ -1,11 +1,12 @@
 /**
  * 配置读写：settings.json 的 pi-lazy-evo 命名空间。
- * 全局（~/.pi/agent/settings.json）与项目（<cwd>/.pi/settings.json）合并，项目覆盖全局。
- * 模式切换只写 settings.json——模型可见面（工具集/描述/提示词）不变，不影响 prompt cache。
+ * mode 只存全局（~/.pi/agent/settings.json）——用户偏好，不入库不随仓库分发；
+ * 其余字段全局与项目（<cwd>/.pi/settings.json）合并，项目覆盖全局。
+ * 模式切换只写全局 settings.json——模型可见面（工具集/描述/提示词）不变，不影响 prompt cache。
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /** 扩展命名空间名 */
 const NAMESPACE = "pi-lazy-evo";
@@ -77,6 +78,11 @@ function parseTools(value: unknown): string[] | undefined {
 	return tools.length === 0 ? undefined : [...new Set(tools)];
 }
 
+/** 全局 settings.json 路径：$PI_GLOBAL_SETTINGS_FILE 可覆盖（测试/多用户隔离），默认用户 home */
+function globalSettingsFile(): string {
+	return process.env.PI_GLOBAL_SETTINGS_FILE ?? join(homedir(), ".pi", "agent", "settings.json");
+}
+
 /** 命名空间字段解析器表：settings 键 → 解析函数（解析失败返回 undefined 即忽略该字段） */
 const FIELD_PARSERS: Record<keyof MemorySettings, (value: unknown) => unknown> = {
 	mode: (v) => (v === "manual" || v === "auto" ? v : undefined),
@@ -106,23 +112,29 @@ function readNamespace(path: string): Partial<MemorySettings> | null {
 	return Object.fromEntries(entries) as Partial<MemorySettings>;
 }
 
-/** 合并全局与项目配置（项目覆盖全局） */
+/** 项目可覆盖字段：mode 除外——mode 是用户偏好，只存全局 settings */
+const PROJECT_KEYS = (Object.keys(FIELD_PARSERS) as (keyof MemorySettings)[]).filter((key) => key !== "mode");
+
+/** 合并全局与项目配置（mode 只从全局取；其余字段项目覆盖全局） */
 export function loadConfig(cwd: string): MemorySettings {
 	const merged: MemorySettings = { ...DEFAULTS };
-	const files = [join(homedir(), ".pi", "agent", "settings.json"), join(cwd, ".pi", "settings.json")];
-	for (const path of files) {
+	const sources: [string, (keyof MemorySettings)[]][] = [
+		[globalSettingsFile(), Object.keys(FIELD_PARSERS) as (keyof MemorySettings)[]],
+		[join(cwd, ".pi", "settings.json"), PROJECT_KEYS],
+	];
+	for (const [path, keys] of sources) {
 		const ns = readNamespace(path);
 		if (!ns) continue;
-		for (const key of Object.keys(FIELD_PARSERS) as (keyof MemorySettings)[]) {
+		for (const key of keys) {
 			if (ns[key] !== undefined) (merged as unknown as Record<string, unknown>)[key] = ns[key];
 		}
 	}
 	return merged;
 }
 
-/** 写入模式到项目 settings.json（保留文件其余内容；文件缺失时按空对象创建） */
-export function setMode(cwd: string, mode: MemoryMode): boolean {
-	const path = join(cwd, ".pi", "settings.json");
+/** 切换模式：写入全局 settings.json（目录缺失自动创建；保留文件其余内容） */
+export function setMode(mode: MemoryMode): boolean {
+	const path = globalSettingsFile();
 	let data: Record<string, unknown> = {};
 	try {
 		data = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
@@ -131,6 +143,7 @@ export function setMode(cwd: string, mode: MemoryMode): boolean {
 	}
 	data[NAMESPACE] = { ...(typeof data[NAMESPACE] === "object" && data[NAMESPACE] ? (data[NAMESPACE] as Record<string, unknown>) : {}), mode };
 	try {
+		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
 		return true;
 	} catch {

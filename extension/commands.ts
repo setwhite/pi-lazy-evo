@@ -89,10 +89,13 @@ export function registerMemoryCommands(pi: ExtensionAPI, runtime: Runtime): void
 
 /** /memory overview：挡位 + 四态分布 + 待验清单（只展示，不注入） */
 async function overview(_args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
-	const mode = loadConfig(ctx.cwd).mode;
+	const config = loadConfig(ctx.cwd);
+	const mode = config.mode;
 	const gated = gateLibrary(readLibrary(ctx.cwd));
 	if (!gated.length) {
-		notify(ctx, "Memory Overview", [`Mode: ${mode}`, "Memory library is empty."]);
+		const lines = [`Mode: ${mode}`, "Memory library is empty."];
+		if (mode === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
+		notify(ctx, "Memory Overview", lines);
 		return;
 	}
 	const { counts, pending } = summarizeLibrary(gated);
@@ -104,6 +107,7 @@ async function overview(_args: string, ctx: ExtensionCommandContext, _runtime: R
 		lines.push(`Needs verification (${pending.length}): ${pending.map(({ id, state }) => `${id} (${state === "none" ? "unverified" : "stale"})`).join(", ")}`);
 		lines.push("Run /memory verify for a batch check.");
 	}
+	if (mode === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
 	notify(ctx, "Memory Overview", lines);
 }
 
@@ -153,17 +157,23 @@ const MODE_LABEL: Record<MemoryMode, string> = {
 	manual: "commands only",
 };
 
-/** /memory mode [auto|manual]：查看或切换挡位（只写 settings.json，不影响 prompt cache） */
+/** 未配置 autoModel 的提醒（切 auto / overview 时提示） */
+const AUTO_MODEL_HINT =
+	"未配置 autoModel：auto 挡后台任务将用主会话模型，建议在全局 settings.json 的 pi-lazy-evo 命名空间配置便宜模型（provider / id / thinking）。";
+
+/** /memory mode [auto|manual]：查看或切换挡位（只写全局 settings.json，不影响 prompt cache） */
 async function mode(args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
 	const wanted = args.trim().toLowerCase();
+	const config = loadConfig(ctx.cwd);
 	if (wanted !== "auto" && wanted !== "manual") {
-		const current = loadConfig(ctx.cwd).mode;
 		notify(ctx, "Memory Mode", [
-			`Current mode: ${current} (${MODE_LABEL[current]}).`,
+			`Current mode: ${config.mode} (${MODE_LABEL[config.mode]}).`,
 			"Usage: /memory mode [auto|manual]",
 		]);
 		return;
 	}
-	const ok = setMode(ctx.cwd, wanted);
-	notify(ctx, "Memory Mode", [ok ? `Mode switched to ${wanted} (${MODE_LABEL[wanted]}).` : `Failed to switch to ${wanted}.`]);
+	const ok = setMode(wanted);
+	const lines = [ok ? `Mode switched to ${wanted} (${MODE_LABEL[wanted]}).` : `Failed to switch to ${wanted}.`];
+	if (ok && wanted === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
+	notify(ctx, "Memory Mode", lines);
 }
