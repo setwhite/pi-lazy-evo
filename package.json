@@ -1,0 +1,23 @@
+{
+  "name": "pi-lazy-evo",
+  "version": "0.1.0",
+  "description": "pi agent 扩展：把会话信息沉淀为可验证的长期记忆（本地 md 存储 + 验证门控）",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "files": ["extension/*.ts", "extension/protocol/"],
+  "scripts": {
+    "test": "bun test extension/tests",
+    "typecheck": "bunx tsc -p extension/tsconfig.json"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@types/bun": "^1.4.0",
+    "@types/node": "^26.2.0"
+  },
+  "pi": {
+    "extensions": ["./extension"]
+  }
+}
