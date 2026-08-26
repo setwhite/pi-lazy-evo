@@ -71,4 +71,4 @@ checked_at / result），证据写在正文、必填。记录只追加不覆盖�
 
 ## 安装
 
-见 [README](../README.md)：把 `extension/` 软链到全局或项目扩展位。
+见 [README](../README.md)：`pi install npm:pi-lazy-evo`（全局）或 `pi install -l npm:pi-lazy-evo`（仅当前项目）。

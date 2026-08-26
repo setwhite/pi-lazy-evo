@@ -18,18 +18,19 @@ pi agent的扩展，把会话里的信息沉淀为**可验证的实体**，用**
 
 ## 快速开始
 
-把本仓库 `extension/` 软链到扩展目录
+通过 npm 安装（已发布为 pi 包）：
 
 ```bash
 # 全局：所有项目生效
-ln -s "$PWD/extension" ~/.pi/agent/extensions/pi-lazy-evo
+pi install npm:pi-lazy-evo
 
-# 仅当前项目
-mkdir -p .pi/extensions
-ln -s "$PWD/extension" .pi/extensions/pi-lazy-evo
+# 仅当前项目：写入 .pi/settings.json
+pi install -l npm:pi-lazy-evo
 ```
 
 重启 pi 自动加载。
+
+本地开发时可用 `pi -e ./` 临时加载（不写入设置），或 `pi install ./` 从目录安装。
 
 记忆库默认在项目工作目录 `.memory/`（`MEMORY_DIR` 可覆盖）。
 
