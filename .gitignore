@@ -4,5 +4,5 @@
 # 依赖（bun 安装产物），不入库
 node_modules/
 
-# 本机安装产物（.pi/extensions/pi-lazy-evo 符号链接 → extension/）
-.pi/extensions/
+# 本机配置与安装产物（pi-lazy-evo 命名空间、.pi/extensions 符号链接），不随仓库分发
+.pi/
