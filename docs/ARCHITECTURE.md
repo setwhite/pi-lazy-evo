@@ -16,7 +16,7 @@
 extension/
 ├── index.ts         # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令 + auto 钩子
 ├── commands.ts      # 单一 /memory 入口：子命令表（路由/帮助/补全单一数据源）+ 6 个子命令
-├── auto.ts          # auto 挡：turn_end 水位判定 + 串行编排 + spawn worker 子进程 + 快照 diff
+├── auto.ts          # auto 挡：turn_end 水位判定 + record/verify 派发 + 无管道 spawn + 快照 diff + shutdown 冲刷
 ├── prompts.ts       # 代理任务纯数据（AgentTask）+ 提示词组装注入（主会话/worker 共用）
 ├── store.ts         # 存储域：布局 / 实体 / 验证记录 / 全库配对
 ├── gate.ts          # 门控域：单实体四态判定 / 批量门控 / 待验筛选 / 全库摘要
@@ -85,7 +85,7 @@ value 必须带子命令词（如 `mode auto`）。
 
 ## auto 挡
 
-挂在 `turn_end` 事件上：水位判定（纯函数）→ 串行派发 record、verify 两个后台任务。
+挂在 `turn_end` 事件上：水位判定（纯函数）→ record（串行单任务）→ verify（并行批次）。
 
 **水位判定**（`decideAutoTrigger`）：会话累计 token 与基线之差达到 `autoWatermarkTokens`
 触发一次。三个防循环规则：
@@ -94,13 +94,21 @@ value 必须带子命令词（如 `mode auto`）。
 - token 回落（compaction）重设基线，不触发
 - worker 在跑（inFlight）时吸收增量，结束后不重复触发
 
-**worker 子进程**：任务提示词写入临时文件，spawn 独立 `pi --mode json -p --no-session`
-子进程，`--tools` 传白名单、`--model` 传便宜模型（缺省主模型）、`--thinking low`；
-10 分钟超时杀进程；轮数上限 `autoMaxTurns` 是硬约束——数 assistant message_end 事件，
-到限立即 SIGKILL，不给子进程开口机会。
+**worker 子进程（无管道通道）**：任务提示词写入临时文件，spawn 独立 `pi -p --no-session`
+子进程，`--tools` 传白名单、`--model` 传便宜模型（缺省主模型）、`--thinking low`。
+`spawn` 用 `detached + unref + stdio 全 ignore`：无管道即无 EPIPE——主进程退出后
+worker 变孤儿继续跑（`session_shutdown` 冲刷依赖此语义）。主进程存活期有 10 分钟超时
+SIGKILL 宠底；轮数上限 `autoMaxTurns` 只是提示词软约束，无硬杀；worker 成败由
+调用方用库快照 diff 判定，不读子进程输出。
+
+**verify 并行批次**：待验实体按 `splitPending` 切块（块数 ≤ 并发上限 8），每块一个子进程
+并发跑；批次前后统一快照 diff，汇总一条通知（`Worker×N` + 结果/失败明细）。
 
 **结果通知**：worker 前后各拍一次库快照（实体 id→mtime + 验证记录文件名→target/result），
 diff 后一行通知：record 报 `+ 新增 / ~ 更新`，verify 报 `+ 验证：<id> ✅/⚠️`。
+
+**session_shutdown 冲刷**：主进程退出时若 auto 挡且会话素材非空，把尾部增量交给独立
+worker（孤儿继续跑，串行 record→verify，无通知——结果直接落盘 `.memory`）。
 
 ## 设计决策
 

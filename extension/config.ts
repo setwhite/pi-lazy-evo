@@ -45,11 +45,11 @@ export interface MemorySettings {
 	autoVerifyTools: string[];
 }
 
-/** 默认配置：手动挡；触发器 32k token；worker 上限 12 轮 */
+/** 默认配置：手动挡；触发器 32k token；worker 上限 16 轮 */
 const DEFAULTS: MemorySettings = {
 	mode: "manual",
 	autoWatermarkTokens: 32_000,
-	autoMaxTurns: 12,
+	autoMaxTurns: 16,
 	autoMemoTools: [...DEFAULT_MEMO_TOOLS],
 	autoVerifyTools: [...DEFAULT_VERIFY_TOOLS],
 };

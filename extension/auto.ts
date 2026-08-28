@@ -1,6 +1,7 @@
 /**
- * auto 自动挡：turn_end 时钟 + token 水位判定，串行派发两个后台任务（record→verify）。
+ * auto 自动挡：turn_end 时钟 + token 水位判定，派发后台任务（record 串行 + verify 并行批次）。
  * 任务语义与手动命令同一套（prompts.ts），通道不同：手动走主会话注入，自动走子进程。
+ * 无管道通道：stdio 全 ignore + detached——主进程退出后 worker 变孤儿继续跑（session_shutdown 冲刷依赖此语义）。
  * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线。
  */
 import { spawn } from "node:child_process";
@@ -10,9 +11,9 @@ import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildWorkerPrompt, extractTranscript, recordTask, verifyTask, type AgentTask } from "./prompts.ts";
 import { loadConfig, type AutoModel, type MemorySettings } from "./config.ts";
-import { gateLibrary, selectPending, toPending } from "./gate.ts";
+import { gateLibrary, selectPending, toPending, type GatedEntity, type PendingEntity } from "./gate.ts";
 import { ensureMemoryDir, listEntities, listVerifications, readLibrary } from "./store.ts";
-import { messageText, notify } from "./utils.ts";
+import { notify } from "./utils.ts";
 import type { Runtime } from "./index.ts";
 
 // ---- 水位触发判定 ----
@@ -43,7 +44,7 @@ export function decideAutoTrigger(state: AutoState, tokens: number, watermarkTok
 	return { trigger: true, state: { ...state, baselineTokens: tokens } };
 }
 
-/** 挂载 auto 钩子：turn_end + 水位判定 + 状态机 */
+/** 挂载 auto 钩子：turn_end + 水位判定 + 状态机；session_shutdown 冲刷尾部增量 */
 export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void {
 	let state: AutoState = { ...INITIAL_AUTO_STATE };
 	pi.on("turn_end", (_event, ctx) => {
@@ -59,16 +60,34 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 			state = { ...state, inFlight: false };
 		});
 	});
+	pi.on("session_shutdown", (_event, ctx) => {
+		const config = loadConfig(ctx.cwd);
+		if (config.mode !== "auto") return;
+		// 尾部冲刷：不 await（detached 孤儿，主进程退出后继续跑）；素材非空才值得派发
+		const transcript = extractTranscript(ctx.sessionManager.getEntries());
+		if (!transcript.trim()) return;
+		void flushOnShutdown(runtime, ctx, config, transcript);
+	});
 }
 
-/** 串行派发：先 record（带会话素材），后 verify（算好待验清单注入） */
+/** 串行派发：先 record（带会话素材），后 verify（并行批次） */
 async function runAutoWorker(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings): Promise<void> {
 	ensureMemoryDir(ctx.cwd);
 	const record = recordTask(extractTranscript(ctx.sessionManager.getEntries()));
 	await runWorkerTask("record", record, runtime.protocolDir, ctx, config, config.autoMemoTools);
 	const pending = selectPending(gateLibrary(readLibrary(ctx.cwd)));
-	const verify = verifyTask(toPending(pending));
-	await runWorkerTask("verify", verify, runtime.protocolDir, ctx, config, config.autoVerifyTools);
+	await runVerifyBatch(pending, runtime.protocolDir, ctx, config);
+}
+
+/** shutdown 冲刷：尾部素材交给独立 worker（孤儿通道，串行 record→verify，无通知） */
+async function flushOnShutdown(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings, transcript: string): Promise<void> {
+	ensureMemoryDir(ctx.cwd);
+	await runWorker("record", recordTask(transcript), runtime.protocolDir, ctx, config, config.autoMemoTools);
+	const pending = selectPending(gateLibrary(readLibrary(ctx.cwd)));
+	if (pending.length > 0) {
+		// 孤儿通道从简：所有待验实体放一个 worker 串行处理，不开并行（多个无监管进程风险大于收益）
+		await runWorker("verify", verifyTask(toPending(pending)), runtime.protocolDir, ctx, config, config.autoVerifyTools);
+	}
 }
 
 // ---- worker 子进程通道 ----
@@ -140,7 +159,7 @@ export function buildAutoWorkerArgs(input: { model?: AutoModel; tools: string[];
 	const promptDir = mkdtempSync(join(tmpdir(), "pi-lazy-evo-auto-"));
 	const promptFile = join(promptDir, "worker.md");
 	writeFileSync(promptFile, input.promptContent, "utf8");
-	const args = ["--mode", "json", "-p", "--no-session"];
+	const args = ["-p", "--no-session"];
 	if (input.model) {
 		args.push("--model", `${input.model.provider}/${input.model.id}`);
 		args.push("--thinking", input.model.thinking ?? "low");
@@ -152,87 +171,87 @@ export function buildAutoWorkerArgs(input: { model?: AutoModel; tools: string[];
 	return { command: "pi", args, promptFile, promptDir };
 }
 
-/** 跑一个后台任务：拼提示词 → 快照 → spawn → diff 通知 → 清理临时目录 */
-export async function runWorkerTask(kind: WorkerKind, task: AgentTask, protocolDir: string, ctx: ExtensionContext, config: MemorySettings, tools: string[]): Promise<void> {
+/** 并发上限：verify 批次同时最多 N 个 worker */
+const MAX_VERIFY_CONCURRENCY = 8;
+
+/** 待验清单切块：块数 ≤ 并发上限（每块 ceil(n/块数)），空清单返回空数组 */
+export function splitPending(pending: PendingEntity[], maxWorkers: number = MAX_VERIFY_CONCURRENCY): PendingEntity[][] {
+	const total = pending.length;
+	if (total === 0) return [];
+	const workers = Math.min(total, maxWorkers);
+	const size = Math.ceil(total / workers);
+	const chunks: PendingEntity[][] = [];
+	for (let i = 0; i < total; i += size) chunks.push(pending.slice(i, i + size));
+	return chunks;
+}
+
+/** 跑一个 worker 任务（无快照无通知）：拼提示词 → spawn → 清理临时目录 */
+async function runWorker(kind: WorkerKind, task: AgentTask, protocolDir: string, ctx: ExtensionContext, config: MemorySettings, tools: string[]): Promise<void> {
 	const promptContent = buildWorkerPrompt(task, protocolDir, ctx.cwd, config.autoMaxTurns);
 	const built = buildAutoWorkerArgs({ model: config.autoModel, tools, promptContent });
 	try {
-		const before = snapshotLibrary(ctx.cwd);
-		await spawnWorker({ command: built.command, args: built.args, cwd: ctx.cwd, timeoutMs: WORKER_TIMEOUT_MS, maxTurns: config.autoMaxTurns });
-		const changes = diffLibrary(before, snapshotLibrary(ctx.cwd));
-		const model = config.autoModel ? config.autoModel.id : "主模型";
-		notify(ctx, `Memory Auto·${kind}（${model}）`, [formatChanges(kind, changes)]);
-	} catch (error) {
-		notify(ctx, `Memory Auto·${kind} 失败`, [error instanceof Error ? error.message : String(error)]);
+		await spawnWorker({ command: built.command, args: built.args, cwd: ctx.cwd, timeoutMs: WORKER_TIMEOUT_MS });
 	} finally {
 		rmSync(built.promptDir, { recursive: true, force: true });
 	}
 }
 
-/** spawn 参数（内部）：命令/参数/工作目录/超时/轮数上限 */
+/** 单任务通道（record 用）：快照 → spawn → diff → 通知 */
+export async function runWorkerTask(kind: WorkerKind, task: AgentTask, protocolDir: string, ctx: ExtensionContext, config: MemorySettings, tools: string[]): Promise<void> {
+	const before = snapshotLibrary(ctx.cwd);
+	try {
+		await runWorker(kind, task, protocolDir, ctx, config, tools);
+		const changes = diffLibrary(before, snapshotLibrary(ctx.cwd));
+		const model = config.autoModel ? config.autoModel.id : "主模型";
+		notify(ctx, `Memory Auto·${kind}（${model}）`, [formatChanges(kind, changes)]);
+	} catch (error) {
+		notify(ctx, `Memory Auto·${kind} 失败`, [error instanceof Error ? error.message : String(error)]);
+	}
+}
+
+/** 批次通道（verify 并行）：切块 → 统一 before 快照 → 并发 spawn → 统一 diff → 汇总一条通知 */
+async function runVerifyBatch(pending: GatedEntity[], protocolDir: string, ctx: ExtensionContext, config: MemorySettings): Promise<void> {
+	const chunks = splitPending(toPending(pending));
+	if (chunks.length === 0) return;
+	const before = snapshotLibrary(ctx.cwd);
+	const results = await Promise.allSettled(chunks.map((chunk) => runWorker("verify", verifyTask(chunk), protocolDir, ctx, config, config.autoVerifyTools)));
+	const changes = diffLibrary(before, snapshotLibrary(ctx.cwd));
+	const failures = results
+		.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+		.map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
+	const model = config.autoModel ? config.autoModel.id : "主模型";
+	const lines = [`Worker×${chunks.length}：${formatChanges("verify", changes)}`];
+	if (failures.length > 0) lines.push(`失败 ${failures.length} 个：${failures.join("；")}`);
+	notify(ctx, `Memory Auto·verify（${model}）`, lines);
+}
+
+/** spawn 参数（内部）：命令/参数/工作目录/超时（无管道通道，无事件流解析） */
 interface SpawnInput {
 	command: string;
 	args: string[];
 	cwd: string;
 	timeoutMs: number;
-	maxTurns: number;
 }
 
-/** close 事件收尾判定：命中轮数上限（被 SIGKILL，退出码为 null）算正常结束，不能按非零退出码判失败 */
-export function closeOutcome(input: { code: number | null; hitLimit: boolean; lastAssistant: string }): { ok: boolean; text: string } {
-	if (input.hitLimit) return { ok: true, text: input.lastAssistant || "已达轮数上限（无文本输出）" };
-	if (input.code !== 0) return { ok: false, text: `worker 退出码 ${input.code}` };
-	return { ok: true, text: input.lastAssistant || "已执行（无文本输出）" };
-}
-
-/** spawn pi 子进程（headless），收集输出返回最终 assistant 文本。
- * 轮数上限是硬约束：数 assistant message_end 事件，达到 maxTurns 立即 SIGKILL。 */
-async function spawnWorker(input: SpawnInput): Promise<string> {
-	const { command, args, cwd, timeoutMs, maxTurns } = input;
-	return await new Promise<string>((resolve, reject) => {
-		const proc = spawn(command, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
-		let buffer = "";
-		let stderr = "";
-		let lastAssistant = "";
-		let assistantTurns = 0;
-		let hitLimit = false;
+/**
+ * spawn pi 子进程（headless，无管道通道）。
+ * detached + unref + stdio 全 ignore：主进程退出后 worker 变孤儿继续跑（无管道即无 EPIPE）；
+ * 轮数无硬约束（提示词软约束，见 buildWorkerPrompt）；主进程存活期有超时 SIGKILL 兜底；
+ * worker 成败主进程不得而知——由调用方用文件系统快照 diff 判定。
+ */
+async function spawnWorker(input: SpawnInput): Promise<void> {
+	const { command, args, cwd, timeoutMs } = input;
+	await new Promise<void>((resolve, reject) => {
+		const proc = spawn(command, args, { cwd, shell: false, detached: true, stdio: "ignore" });
+		proc.unref();
 		const timer = setTimeout(() => {
-			proc.kill("SIGKILL");
+			proc.kill("SIGKILL"); // 主进程存活时的超时兜底；主进程已退出则定时器随之失效，worker 靠提示词约束收尾
 			reject(new Error("worker 超时"));
 		}, timeoutMs);
-		proc.stdout.on("data", (data: Buffer) => {
-			buffer += data.toString();
-			const lines = buffer.split("\n");
-			buffer = lines.pop() || "";
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				try {
-					const event = JSON.parse(line) as { type?: string; message?: { role?: string; content?: unknown } };
-					if (event.type === "message_end" && event.message?.role === "assistant") {
-						assistantTurns++;
-						const text = messageText(event.message.content).trim();
-						if (text) lastAssistant = text;
-						if (assistantTurns >= maxTurns) {
-							hitLimit = true;
-							proc.kill("SIGKILL"); // 轮数上限：硬约束，不再给子进程开口机会
-						}
-					}
-				} catch {
-					// 非 JSON 行忽略（如日志）
-				}
-			}
-		});
-		proc.stderr.on("data", (data: Buffer) => {
-			stderr += data.toString();
-		});
 		proc.on("close", (code) => {
 			clearTimeout(timer);
-			const outcome = closeOutcome({ code, hitLimit, lastAssistant });
-			if (!outcome.ok) {
-				reject(new Error(`${outcome.text}${stderr ? `：${stderr.slice(0, 200)}` : ""}`));
-				return;
-			}
-			resolve(outcome.text);
+			if (code === 0) resolve();
+			else reject(new Error(code === null ? "worker 被外部终止" : `worker 退出码 ${code}`));
 		});
 		proc.on("error", (err) => {
 			clearTimeout(timer);

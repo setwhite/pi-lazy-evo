@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, closeOutcome, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary } from "../extension/auto.ts";
+import { buildAutoWorkerArgs, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary, splitPending } from "../extension/auto.ts";
 import { buildAgentPrompt, buildWorkerPrompt, extractTranscript, recordTask, verifyTask } from "../extension/prompts.ts";
 import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
 
@@ -135,7 +135,9 @@ describe("buildAutoWorkerArgs", () => {
 	it("未配置模型：不带 --model，仍写提示词文件", () => {
 		const built = withCleanup(buildAutoWorkerArgs({ promptContent: "P", tools: ["read"] }));
 		expect(built.args).not.toContain("--model");
-		expect(built.args.some((a) => a === "--mode" || a === "-p" || a === "--no-session")).toBe(true);
+		expect(built.args).toContain("-p");
+		expect(built.args).toContain("--no-session");
+		expect(built.args).not.toContain("--mode"); // 无管道通道：不输出事件流，无需 json 模式
 	});
 
 	it("工具白名单以逗号拼接传给 --tools（默认验证集含 web）", () => {
@@ -201,18 +203,30 @@ describe("formatChanges", () => {
 	});
 });
 
-describe("closeOutcome", () => {
-	it("正常退出（code 0）：无文本时用兜底文案", () => {
-		expect(closeOutcome({ code: 0, hitLimit: false, lastAssistant: "done" })).toEqual({ ok: true, text: "done" });
-		expect(closeOutcome({ code: 0, hitLimit: false, lastAssistant: "" })).toEqual({ ok: true, text: "已执行（无文本输出）" });
+describe("splitPending", () => {
+	const item = (id: string): import("../extension/gate.ts").PendingEntity => ({ id, kind: "tool", state: "none" });
+
+	it("空清单返回空数组", () => {
+		expect(splitPending([])).toEqual([]);
 	});
 
-	it("命中轮数上限被 SIGKILL（code null）算正常结束，不误报失败", () => {
-		expect(closeOutcome({ code: null, hitLimit: true, lastAssistant: "部分完成" })).toEqual({ ok: true, text: "部分完成" });
-		expect(closeOutcome({ code: null, hitLimit: true, lastAssistant: "" })).toEqual({ ok: true, text: "已达轮数上限（无文本输出）" });
+	it("实体数不超过并发上限：每实体一块", () => {
+		const chunks = splitPending([item("a"), item("b"), item("c"), item("d")]);
+		expect(chunks).toHaveLength(4);
+		expect(chunks.flat().map((c) => c.id)).toEqual(["a", "b", "c", "d"]);
 	});
 
-	it("非零退出码判失败", () => {
-		expect(closeOutcome({ code: 1, hitLimit: false, lastAssistant: "" })).toEqual({ ok: false, text: "worker 退出码 1" });
+	it("实体数超过并发上限：块数 ≤ 上限，且不丢不重", () => {
+		const many = Array.from({ length: 20 }, (_, i) => item(`e${i}`));
+		const chunks = splitPending(many);
+		expect(chunks.length).toBeLessThanOrEqual(8);
+		expect(chunks.flat().map((c) => c.id)).toEqual(many.map((c) => c.id));
+	});
+
+	it("边界：9 个实体切成 5 块（每块 ≤ 2）", () => {
+		const many = Array.from({ length: 9 }, (_, i) => item(`e${i}`));
+		const chunks = splitPending(many);
+		expect(chunks.length).toBe(5);
+		expect(Math.max(...chunks.map((c) => c.length))).toBeLessThanOrEqual(2);
 	});
 });
