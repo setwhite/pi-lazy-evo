@@ -6,3 +6,6 @@ node_modules/
 
 # 本机配置与安装产物（pi-lazy-evo 命名空间、.pi/extensions 符号链接），不随仓库分发
 .pi/
+
+# 参考仓库克隆（web_fetch 工具产物），不入库
+.pi-github-repos/
