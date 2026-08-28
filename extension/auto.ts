@@ -1,9 +1,9 @@
 /**
- * auto 自动挡：turn_end 水位判定派发后台任务（record 串行 + verify 批次）；session_shutdown 尾部冲刷复用同一执行体。
+ * auto 自动挡：turn_end 水位判定派发后台任务（record 串行 + verify 批次）。
  * 任务语义与手动命令同一套（prompts.ts），通道不同：手动走主会话注入，自动走子进程。
  * 无管道通道：stdio 全 ignore + non-detached——子进程继承父控制台，Windows 上不弹新窗口；
  * detached 在 Windows 必弹新控制台（CREATE_NEW_CONSOLE，与 windowsHide 互斥），故不可用。
- * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线；lastRunTokens 节流冲刷。
+ * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线。
  */
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -27,39 +27,25 @@ export interface AutoState {
 	initialized: boolean;
 	/** 是否有 worker 在跑 */
 	inFlight: boolean;
-	/** 上次实际跑 worker 时的上下文 tokens（null = 从未跑过；shutdown 冲刷节流依据） */
-	lastRunTokens: number | null;
 }
 
 /** 初始状态 */
-export const INITIAL_AUTO_STATE: AutoState = { baselineTokens: 0, initialized: false, inFlight: false, lastRunTokens: null };
+export const INITIAL_AUTO_STATE: AutoState = { baselineTokens: 0, initialized: false, inFlight: false };
 
 /**
  * 纯判定：给定状态与当前累计 token，水位增量是否足以触发一次自动任务。
  * 首次观察吸收基线不触发；compaction（tokens 回落）重设基线不触发；
- * 增量未达阈值不触发；worker 在跑时吸收增量（结束后不重复触发）；
- * 触发推进 lastRunTokens（shutdown 节流的"刚跑过"标记）。
+ * 增量未达阈值不触发；worker 在跑时吸收增量（结束后不重复触发）。
  */
 export function decideAutoTrigger(state: AutoState, tokens: number, watermarkTokens: number): { trigger: boolean; state: AutoState } {
 	if (!state.initialized) return { trigger: false, state: { ...state, baselineTokens: tokens, initialized: true } };
 	if (tokens < state.baselineTokens) return { trigger: false, state: { ...state, baselineTokens: tokens } };
 	if (tokens - state.baselineTokens < watermarkTokens) return { trigger: false, state };
 	if (state.inFlight) return { trigger: false, state: { ...state, baselineTokens: tokens } };
-	return { trigger: true, state: { ...state, baselineTokens: tokens, lastRunTokens: tokens } };
+	return { trigger: true, state: { ...state, baselineTokens: tokens } };
 }
 
-/** shutdown 冲刷节流阈值：距上次实际任务的增量低于该值不冲刷（素材刚固化或太少） */
-const AUTO_FLUSH_MIN_TOKENS = 8_000;
-
-/**
- * shutdown 冲刷判定：从未跑过 / token 不可知 → 保守冲刷；增量不足 → 素材刚固化或太少，跳过。
- */
-export function shouldFlushOnShutdown(lastRunTokens: number | null, currentTokens: number | null, minTokens: number): boolean {
-	if (lastRunTokens === null || currentTokens === null) return true;
-	return currentTokens - lastRunTokens >= minTokens;
-}
-
-/** 挂载 auto 钩子：turn_end 水位触发与 session_shutdown 尾部冲刷共用 runAutoTasks */
+/** 挂载 auto 钩子：turn_end 水位触发 */
 export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void {
 	let state: AutoState = { ...INITIAL_AUTO_STATE };
 	pi.on("turn_end", (_event, ctx) => {
@@ -71,56 +57,34 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 		state = decision.state;
 		if (!decision.trigger) return;
 		state = { ...state, inFlight: true };
-		void runAutoTasks(runtime, ctx, config, {
-			transcript: extractTranscript(ctx.sessionManager.getEntries()),
-			verifyConcurrency: MAX_VERIFY_CONCURRENCY,
-			notify: true,
-		})
+		void runAutoTasks({ runtime, ctx, config, transcript: extractTranscript(ctx.sessionManager.getEntries()) })
 			.catch((error) => notify(ctx, "Memory Auto 失败", [error instanceof Error ? error.message : String(error)]))
 			.finally(() => {
 				state = { ...state, inFlight: false };
 			});
 	});
-	pi.on("session_shutdown", (_event, ctx) => {
-		const config = loadConfig(ctx.cwd);
-		if (config.mode !== "auto") return;
-		if (state.inFlight) return; // turn_end worker 正在固化同一份素材（无新回合），跳过无损
-		// 尾部冲刷：不 await（主进程退出不连带杀子进程）；素材非空才值得派发
-		const transcript = extractTranscript(ctx.sessionManager.getEntries());
-		if (!transcript.trim()) return;
-		const tokens = ctx.getContextUsage()?.tokens ?? null;
-		// 节流：从未跑过 / token 不可知 → 保守冲刷；增量不足 → 素材刚固化或太少，跳过
-		if (!shouldFlushOnShutdown(state.lastRunTokens, tokens, AUTO_FLUSH_MIN_TOKENS)) return;
-		state = { ...state, inFlight: true, lastRunTokens: tokens ?? state.lastRunTokens ?? 0 };
-		void runAutoTasks(runtime, ctx, config, { transcript, verifyConcurrency: 1, notify: false })
-			.catch((error) => console.error("[pi-lazy-evo] shutdown 冲刷异常：", error))
-			.finally(() => {
-				state = { ...state, inFlight: false };
-			});
-	});
 }
 
-/** 自动任务执行参数：会话素材 + verify 并发上限 + 是否通知（shutdown 静默） */
-interface AutoTaskOptions {
+/** 自动任务输入：执行环境 + 会话素材 */
+interface AutoTaskInput {
+	runtime: Runtime;
+	ctx: ExtensionContext;
+	config: MemorySettings;
 	transcript: string;
-	verifyConcurrency: number;
-	notify: boolean;
 }
 
 /**
- * 一次自动任务：record（会话素材）→ verify（待验批次）。
- * turn_end（并发 8 / 通知）与 session_shutdown（串行 1 / 静默）共用；notify 时两段分开快照 diff，汇总一条通知。
+ * 一次自动任务：record（会话素材）→ verify（待验批次），两段分开快照 diff，汇总一条通知。
  */
-async function runAutoTasks(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings, options: AutoTaskOptions): Promise<void> {
+async function runAutoTasks({ runtime, ctx, config, transcript }: AutoTaskInput): Promise<void> {
 	ensureMemoryDir(ctx.cwd);
-	const before = options.notify ? snapshotLibrary(ctx.cwd) : null;
-	await runWorker("record", recordTask(options.transcript), runtime.protocolDir, ctx, config, config.autoMemoTools);
-	const mid = options.notify ? snapshotLibrary(ctx.cwd) : null;
-	const chunks = splitPending(toPending(selectPending(gateLibrary(readLibrary(ctx.cwd)))), options.verifyConcurrency);
+	const before = snapshotLibrary(ctx.cwd);
+	await runWorker("record", recordTask(transcript), runtime.protocolDir, ctx, config, config.autoMemoTools);
+	const mid = snapshotLibrary(ctx.cwd);
+	const chunks = splitPending(toPending(selectPending(gateLibrary(readLibrary(ctx.cwd)))));
 	const results = await Promise.allSettled(chunks.map((chunk) => runWorker("verify", verifyTask(chunk), runtime.protocolDir, ctx, config, config.autoVerifyTools)));
-	if (!options.notify) return;
-	const recordChanges = diffLibrary(before!, mid!);
-	const verifyChanges = diffLibrary(mid!, snapshotLibrary(ctx.cwd));
+	const recordChanges = diffLibrary(before, mid);
+	const verifyChanges = diffLibrary(mid, snapshotLibrary(ctx.cwd));
 	const failures = results
 		.filter((r): r is PromiseRejectedResult => r.status === "rejected")
 		.map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
@@ -270,13 +234,13 @@ function killWorkerTree(pid: number): void {
 
 /**
  * spawn pi 子进程（headless，无管道通道）。
- * non-detached + unref + stdio 全 ignore：继承父控制台不弹窗；主进程退出不连带杀子进程（除非控制台关闭），
+ * non-detached + unref + stdio 全 ignore：继承父控制台不弹窗（detached 在 Windows 必弹新控制台）；
  * 存活期有超时兜底（杀进程树）；worker 成败主进程不得而知——由调用方用文件系统快照 diff 判定。失败/超时以 reject 上报。
  */
 async function spawnWorker(input: SpawnInput): Promise<void> {
 	const { command, args, cwd, timeoutMs } = input;
 	await new Promise<void>((resolve, reject) => {
-		// non-detached：Windows 上 detached 必弹新控制台（与 windowsHide 互斥），放弃孤儿化换无窗口
+		// non-detached：子进程继承父控制台，Windows 上不弹新窗口（detached 必弹新控制台）
 		const proc = spawn(command, args, { cwd, shell: false, stdio: "ignore", windowsHide: true });
 		proc.unref();
 		const timer = setTimeout(() => {

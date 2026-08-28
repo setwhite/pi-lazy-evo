@@ -18,7 +18,7 @@
 ## 挡位
 
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库
-- `auto`：会话结束（turn_end）按 token 水位触发，后台便宜模型自动 record + verify
+- `auto`：会话进行中按 token 水位触发，后台便宜模型自动 record + verify
 
 auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即用）。分两个来源：
 - **mode** 只存全局 `~/.pi/agent/settings.json`——用户偏好，不入库不随仓库分发；`/memory mode` 切换的就是它
