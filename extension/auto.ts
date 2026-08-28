@@ -1,7 +1,8 @@
 /**
  * auto 自动挡：turn_end 水位判定派发后台任务（record 串行 + verify 批次）；session_shutdown 尾部冲刷复用同一执行体。
  * 任务语义与手动命令同一套（prompts.ts），通道不同：手动走主会话注入，自动走子进程。
- * 无管道通道：stdio 全 ignore + detached——主进程退出后 worker 变孤儿继续跑（冲刷依赖此语义）。
+ * 无管道通道：stdio 全 ignore + non-detached——子进程继承父控制台，Windows 上不弹新窗口；
+ * detached 在 Windows 必弹新控制台（CREATE_NEW_CONSOLE，与 windowsHide 互斥），故不可用。
  * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线；lastRunTokens 节流冲刷。
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -84,7 +85,7 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 		const config = loadConfig(ctx.cwd);
 		if (config.mode !== "auto") return;
 		if (state.inFlight) return; // turn_end worker 正在固化同一份素材（无新回合），跳过无损
-		// 尾部冲刷：不 await（detached 孤儿，主进程退出后继续跑）；素材非空才值得派发
+		// 尾部冲刷：不 await（主进程退出不连带杀子进程）；素材非空才值得派发
 		const transcript = extractTranscript(ctx.sessionManager.getEntries());
 		if (!transcript.trim()) return;
 		const tokens = ctx.getContextUsage()?.tokens ?? null;
@@ -244,7 +245,7 @@ interface SpawnInput {
 }
 
 /**
- * 终止 worker 进程树：Windows 用 taskkill /T（SIGKILL 对 detached 子进程无效）；其余平台按进程组 SIGKILL。
+ * 终止 worker 进程树：Windows 用 taskkill /T；其余平台按进程组 SIGKILL。
  * 失败静默：worker 靠提示词轮数约束自行收尾。
  */
 function killWorkerTree(pid: number): void {
@@ -269,17 +270,17 @@ function killWorkerTree(pid: number): void {
 
 /**
  * spawn pi 子进程（headless，无管道通道）。
- * detached + unref + stdio 全 ignore：主进程退出后 worker 变孤儿继续跑；主进程存活期有超时兜底（杀进程树）；
- * worker 成败主进程不得而知——由调用方用文件系统快照 diff 判定。失败/超时以 reject 上报。
+ * non-detached + unref + stdio 全 ignore：继承父控制台不弹窗；主进程退出不连带杀子进程（除非控制台关闭），
+ * 存活期有超时兜底（杀进程树）；worker 成败主进程不得而知——由调用方用文件系统快照 diff 判定。失败/超时以 reject 上报。
  */
 async function spawnWorker(input: SpawnInput): Promise<void> {
 	const { command, args, cwd, timeoutMs } = input;
 	await new Promise<void>((resolve, reject) => {
-		// windowsHide：Windows 上 detached 子进程默认新建可见控制台窗口，stdio 全 ignore 无需窗口（CREATE_NO_WINDOW）
-		const proc = spawn(command, args, { cwd, shell: false, detached: true, stdio: "ignore", windowsHide: true });
+		// non-detached：Windows 上 detached 必弹新控制台（与 windowsHide 互斥），放弃孤儿化换无窗口
+		const proc = spawn(command, args, { cwd, shell: false, stdio: "ignore", windowsHide: true });
 		proc.unref();
 		const timer = setTimeout(() => {
-			if (proc.pid) killWorkerTree(proc.pid); // 主进程存活时的超时兜底；主进程已退出则定时器随之失效，worker 靠提示词约束收尾
+			if (proc.pid) killWorkerTree(proc.pid); // 主进程存活时的超时兜底
 			reject(new Error("worker 超时"));
 		}, timeoutMs);
 		proc.on("close", (code) => {
