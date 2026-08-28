@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary, splitPending } from "../extension/auto.ts";
+import { buildAutoWorkerArgs, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, shouldFlushOnShutdown, snapshotLibrary, splitPending } from "../extension/auto.ts";
 import { buildAgentPrompt, buildWorkerPrompt, extractTranscript, recordTask, verifyTask } from "../extension/prompts.ts";
 import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
 
@@ -54,6 +54,33 @@ describe("decideAutoTrigger", () => {
 		const { trigger, state } = decideAutoTrigger(after, 80_000, 50_000);
 		expect(trigger).toBe(false);
 		expect(state.baselineTokens).toBe(80_000);
+	});
+
+	it("触发推进 lastRunTokens（shutdown 节流的“刚跑过”标记）", () => {
+		const after = decideAutoTrigger(INITIAL_AUTO_STATE, 10_000, 50_000).state;
+		expect(after.lastRunTokens).toBeNull();
+		const { trigger, state } = decideAutoTrigger(after, 70_000, 50_000);
+		expect(trigger).toBe(true);
+		expect(state.lastRunTokens).toBe(70_000);
+	});
+});
+
+describe("shouldFlushOnShutdown", () => {
+	it("从未跑过：保守冲刷", () => {
+		expect(shouldFlushOnShutdown(null, 5_000, 8_000)).toBe(true);
+	});
+
+	it("token 不可知：保守冲刷", () => {
+		expect(shouldFlushOnShutdown(12_000, null, 8_000)).toBe(true);
+	});
+
+	it("距上次跑增量达阈值：冲刷", () => {
+		expect(shouldFlushOnShutdown(10_000, 20_000, 8_000)).toBe(true);
+	});
+
+	it("增量不足（含 compact 回落）：跳过", () => {
+		expect(shouldFlushOnShutdown(10_000, 13_000, 8_000)).toBe(false);
+		expect(shouldFlushOnShutdown(20_000, 5_000, 8_000)).toBe(false);
 	});
 });
 

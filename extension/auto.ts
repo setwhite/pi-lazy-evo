@@ -1,17 +1,17 @@
 /**
- * auto 自动挡：turn_end 时钟 + token 水位判定，派发后台任务（record 串行 + verify 并行批次）。
+ * auto 自动挡：turn_end 水位判定派发后台任务（record 串行 + verify 批次）；session_shutdown 尾部冲刷复用同一执行体。
  * 任务语义与手动命令同一套（prompts.ts），通道不同：手动走主会话注入，自动走子进程。
- * 无管道通道：stdio 全 ignore + detached——主进程退出后 worker 变孤儿继续跑（session_shutdown 冲刷依赖此语义）。
- * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线。
+ * 无管道通道：stdio 全 ignore + detached——主进程退出后 worker 变孤儿继续跑（冲刷依赖此语义）。
+ * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线；lastRunTokens 节流冲刷。
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildWorkerPrompt, extractTranscript, recordTask, verifyTask, type AgentTask } from "./prompts.ts";
 import { loadConfig, type AutoModel, type MemorySettings } from "./config.ts";
-import { gateLibrary, selectPending, toPending, type GatedEntity, type PendingEntity } from "./gate.ts";
+import { gateLibrary, selectPending, toPending, type PendingEntity } from "./gate.ts";
 import { ensureMemoryDir, listEntities, listVerifications, readLibrary } from "./store.ts";
 import { notify } from "./utils.ts";
 import type { Runtime } from "./index.ts";
@@ -26,25 +26,39 @@ export interface AutoState {
 	initialized: boolean;
 	/** 是否有 worker 在跑 */
 	inFlight: boolean;
+	/** 上次实际跑 worker 时的上下文 tokens（null = 从未跑过；shutdown 冲刷节流依据） */
+	lastRunTokens: number | null;
 }
 
 /** 初始状态 */
-export const INITIAL_AUTO_STATE: AutoState = { baselineTokens: 0, initialized: false, inFlight: false };
+export const INITIAL_AUTO_STATE: AutoState = { baselineTokens: 0, initialized: false, inFlight: false, lastRunTokens: null };
 
 /**
  * 纯判定：给定状态与当前累计 token，水位增量是否足以触发一次自动任务。
  * 首次观察吸收基线不触发；compaction（tokens 回落）重设基线不触发；
- * 增量未达阈值不触发；worker 在跑时吸收增量（结束后不重复触发）。
+ * 增量未达阈值不触发；worker 在跑时吸收增量（结束后不重复触发）；
+ * 触发推进 lastRunTokens（shutdown 节流的"刚跑过"标记）。
  */
 export function decideAutoTrigger(state: AutoState, tokens: number, watermarkTokens: number): { trigger: boolean; state: AutoState } {
 	if (!state.initialized) return { trigger: false, state: { ...state, baselineTokens: tokens, initialized: true } };
 	if (tokens < state.baselineTokens) return { trigger: false, state: { ...state, baselineTokens: tokens } };
 	if (tokens - state.baselineTokens < watermarkTokens) return { trigger: false, state };
 	if (state.inFlight) return { trigger: false, state: { ...state, baselineTokens: tokens } };
-	return { trigger: true, state: { ...state, baselineTokens: tokens } };
+	return { trigger: true, state: { ...state, baselineTokens: tokens, lastRunTokens: tokens } };
 }
 
-/** 挂载 auto 钩子：turn_end + 水位判定 + 状态机；session_shutdown 冲刷尾部增量 */
+/** shutdown 冲刷节流阈值：距上次实际任务的增量低于该值不冲刷（素材刚固化或太少） */
+const AUTO_FLUSH_MIN_TOKENS = 8_000;
+
+/**
+ * shutdown 冲刷判定：从未跑过 / token 不可知 → 保守冲刷；增量不足 → 素材刚固化或太少，跳过。
+ */
+export function shouldFlushOnShutdown(lastRunTokens: number | null, currentTokens: number | null, minTokens: number): boolean {
+	if (lastRunTokens === null || currentTokens === null) return true;
+	return currentTokens - lastRunTokens >= minTokens;
+}
+
+/** 挂载 auto 钩子：turn_end 水位触发与 session_shutdown 尾部冲刷共用 runAutoTasks */
 export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void {
 	let state: AutoState = { ...INITIAL_AUTO_STATE };
 	pi.on("turn_end", (_event, ctx) => {
@@ -56,38 +70,63 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 		state = decision.state;
 		if (!decision.trigger) return;
 		state = { ...state, inFlight: true };
-		void runAutoWorker(runtime, ctx, config).finally(() => {
-			state = { ...state, inFlight: false };
-		});
+		void runAutoTasks(runtime, ctx, config, {
+			transcript: extractTranscript(ctx.sessionManager.getEntries()),
+			verifyConcurrency: MAX_VERIFY_CONCURRENCY,
+			notify: true,
+		})
+			.catch((error) => notify(ctx, "Memory Auto 失败", [error instanceof Error ? error.message : String(error)]))
+			.finally(() => {
+				state = { ...state, inFlight: false };
+			});
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		const config = loadConfig(ctx.cwd);
 		if (config.mode !== "auto") return;
+		if (state.inFlight) return; // turn_end worker 正在固化同一份素材（无新回合），跳过无损
 		// 尾部冲刷：不 await（detached 孤儿，主进程退出后继续跑）；素材非空才值得派发
 		const transcript = extractTranscript(ctx.sessionManager.getEntries());
 		if (!transcript.trim()) return;
-		void flushOnShutdown(runtime, ctx, config, transcript);
+		const tokens = ctx.getContextUsage()?.tokens ?? null;
+		// 节流：从未跑过 / token 不可知 → 保守冲刷；增量不足 → 素材刚固化或太少，跳过
+		if (!shouldFlushOnShutdown(state.lastRunTokens, tokens, AUTO_FLUSH_MIN_TOKENS)) return;
+		state = { ...state, inFlight: true, lastRunTokens: tokens ?? state.lastRunTokens ?? 0 };
+		void runAutoTasks(runtime, ctx, config, { transcript, verifyConcurrency: 1, notify: false })
+			.catch((error) => console.error("[pi-lazy-evo] shutdown 冲刷异常：", error))
+			.finally(() => {
+				state = { ...state, inFlight: false };
+			});
 	});
 }
 
-/** 串行派发：先 record（带会话素材），后 verify（并行批次） */
-async function runAutoWorker(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings): Promise<void> {
-	ensureMemoryDir(ctx.cwd);
-	const record = recordTask(extractTranscript(ctx.sessionManager.getEntries()));
-	await runWorkerTask("record", record, runtime.protocolDir, ctx, config, config.autoMemoTools);
-	const pending = selectPending(gateLibrary(readLibrary(ctx.cwd)));
-	await runVerifyBatch(pending, runtime.protocolDir, ctx, config);
+/** 自动任务执行参数：会话素材 + verify 并发上限 + 是否通知（shutdown 静默） */
+interface AutoTaskOptions {
+	transcript: string;
+	verifyConcurrency: number;
+	notify: boolean;
 }
 
-/** shutdown 冲刷：尾部素材交给独立 worker（孤儿通道，串行 record→verify，无通知） */
-async function flushOnShutdown(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings, transcript: string): Promise<void> {
+/**
+ * 一次自动任务：record（会话素材）→ verify（待验批次）。
+ * turn_end（并发 8 / 通知）与 session_shutdown（串行 1 / 静默）共用；notify 时两段分开快照 diff，汇总一条通知。
+ */
+async function runAutoTasks(runtime: Runtime, ctx: ExtensionContext, config: MemorySettings, options: AutoTaskOptions): Promise<void> {
 	ensureMemoryDir(ctx.cwd);
-	await runWorker("record", recordTask(transcript), runtime.protocolDir, ctx, config, config.autoMemoTools);
-	const pending = selectPending(gateLibrary(readLibrary(ctx.cwd)));
-	if (pending.length > 0) {
-		// 孤儿通道从简：所有待验实体放一个 worker 串行处理，不开并行（多个无监管进程风险大于收益）
-		await runWorker("verify", verifyTask(toPending(pending)), runtime.protocolDir, ctx, config, config.autoVerifyTools);
-	}
+	const before = options.notify ? snapshotLibrary(ctx.cwd) : null;
+	await runWorker("record", recordTask(options.transcript), runtime.protocolDir, ctx, config, config.autoMemoTools);
+	const mid = options.notify ? snapshotLibrary(ctx.cwd) : null;
+	const chunks = splitPending(toPending(selectPending(gateLibrary(readLibrary(ctx.cwd)))), options.verifyConcurrency);
+	const results = await Promise.allSettled(chunks.map((chunk) => runWorker("verify", verifyTask(chunk), runtime.protocolDir, ctx, config, config.autoVerifyTools)));
+	if (!options.notify) return;
+	const recordChanges = diffLibrary(before!, mid!);
+	const verifyChanges = diffLibrary(mid!, snapshotLibrary(ctx.cwd));
+	const failures = results
+		.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+		.map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
+	const model = config.autoModel ? config.autoModel.id : "主模型";
+	const lines = [`record：${formatChanges("record", recordChanges)}`, `verify×${chunks.length}：${formatChanges("verify", verifyChanges)}`];
+	if (failures.length > 0) lines.push(`失败 ${failures.length} 个：${failures.join("；")}`);
+	notify(ctx, `Memory Auto（${model}）`, lines);
 }
 
 // ---- worker 子进程通道 ----
@@ -185,7 +224,7 @@ export function splitPending(pending: PendingEntity[], maxWorkers: number = MAX_
 	return chunks;
 }
 
-/** 跑一个 worker 任务（无快照无通知）：拼提示词 → spawn → 清理临时目录 */
+/** 单任务 spawn（record / verify 共用）：拼提示词 → spawn → 清理临时目录 */
 async function runWorker(kind: WorkerKind, task: AgentTask, protocolDir: string, ctx: ExtensionContext, config: MemorySettings, tools: string[]): Promise<void> {
 	const promptContent = buildWorkerPrompt(task, protocolDir, ctx.cwd, config.autoMaxTurns);
 	const built = buildAutoWorkerArgs({ model: config.autoModel, tools, promptContent });
@@ -194,35 +233,6 @@ async function runWorker(kind: WorkerKind, task: AgentTask, protocolDir: string,
 	} finally {
 		rmSync(built.promptDir, { recursive: true, force: true });
 	}
-}
-
-/** 单任务通道（record 用）：快照 → spawn → diff → 通知 */
-export async function runWorkerTask(kind: WorkerKind, task: AgentTask, protocolDir: string, ctx: ExtensionContext, config: MemorySettings, tools: string[]): Promise<void> {
-	const before = snapshotLibrary(ctx.cwd);
-	try {
-		await runWorker(kind, task, protocolDir, ctx, config, tools);
-		const changes = diffLibrary(before, snapshotLibrary(ctx.cwd));
-		const model = config.autoModel ? config.autoModel.id : "主模型";
-		notify(ctx, `Memory Auto·${kind}（${model}）`, [formatChanges(kind, changes)]);
-	} catch (error) {
-		notify(ctx, `Memory Auto·${kind} 失败`, [error instanceof Error ? error.message : String(error)]);
-	}
-}
-
-/** 批次通道（verify 并行）：切块 → 统一 before 快照 → 并发 spawn → 统一 diff → 汇总一条通知 */
-async function runVerifyBatch(pending: GatedEntity[], protocolDir: string, ctx: ExtensionContext, config: MemorySettings): Promise<void> {
-	const chunks = splitPending(toPending(pending));
-	if (chunks.length === 0) return;
-	const before = snapshotLibrary(ctx.cwd);
-	const results = await Promise.allSettled(chunks.map((chunk) => runWorker("verify", verifyTask(chunk), protocolDir, ctx, config, config.autoVerifyTools)));
-	const changes = diffLibrary(before, snapshotLibrary(ctx.cwd));
-	const failures = results
-		.filter((r): r is PromiseRejectedResult => r.status === "rejected")
-		.map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
-	const model = config.autoModel ? config.autoModel.id : "主模型";
-	const lines = [`Worker×${chunks.length}：${formatChanges("verify", changes)}`];
-	if (failures.length > 0) lines.push(`失败 ${failures.length} 个：${failures.join("；")}`);
-	notify(ctx, `Memory Auto·verify（${model}）`, lines);
 }
 
 /** spawn 参数（内部）：命令/参数/工作目录/超时（无管道通道，无事件流解析） */
@@ -234,18 +244,42 @@ interface SpawnInput {
 }
 
 /**
+ * 终止 worker 进程树：Windows 用 taskkill /T（SIGKILL 对 detached 子进程无效）；其余平台按进程组 SIGKILL。
+ * 失败静默：worker 靠提示词轮数约束自行收尾。
+ */
+function killWorkerTree(pid: number): void {
+	if (process.platform === "win32") {
+		try {
+			spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+		} catch {
+			// taskkill 不可用或失败：放弃
+		}
+		return;
+	}
+	try {
+		process.kill(-pid, "SIGKILL");
+	} catch {
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// 进程已退出
+		}
+	}
+}
+
+/**
  * spawn pi 子进程（headless，无管道通道）。
- * detached + unref + stdio 全 ignore：主进程退出后 worker 变孤儿继续跑（无管道即无 EPIPE）；
- * 轮数无硬约束（提示词软约束，见 buildWorkerPrompt）；主进程存活期有超时 SIGKILL 兜底；
- * worker 成败主进程不得而知——由调用方用文件系统快照 diff 判定。
+ * detached + unref + stdio 全 ignore：主进程退出后 worker 变孤儿继续跑；主进程存活期有超时兜底（杀进程树）；
+ * worker 成败主进程不得而知——由调用方用文件系统快照 diff 判定。失败/超时以 reject 上报。
  */
 async function spawnWorker(input: SpawnInput): Promise<void> {
 	const { command, args, cwd, timeoutMs } = input;
 	await new Promise<void>((resolve, reject) => {
-		const proc = spawn(command, args, { cwd, shell: false, detached: true, stdio: "ignore" });
+		// windowsHide：Windows 上 detached 子进程默认新建可见控制台窗口，stdio 全 ignore 无需窗口（CREATE_NO_WINDOW）
+		const proc = spawn(command, args, { cwd, shell: false, detached: true, stdio: "ignore", windowsHide: true });
 		proc.unref();
 		const timer = setTimeout(() => {
-			proc.kill("SIGKILL"); // 主进程存活时的超时兜底；主进程已退出则定时器随之失效，worker 靠提示词约束收尾
+			if (proc.pid) killWorkerTree(proc.pid); // 主进程存活时的超时兜底；主进程已退出则定时器随之失效，worker 靠提示词约束收尾
 			reject(new Error("worker 超时"));
 		}, timeoutMs);
 		proc.on("close", (code) => {

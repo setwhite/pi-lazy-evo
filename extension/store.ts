@@ -8,9 +8,9 @@ import { parseFrontmatter, stripFrontmatter, validateId, validateKind } from "./
 
 // ---- 布局 ----
 
-/** 记忆库根目录：优先 $MEMORY_DIR，其次 <cwd>/.memory */
-export function memoryDir(cwd: string): string {
-	return process.env.MEMORY_DIR ?? join(cwd, ".memory");
+/** 记忆库根目录：优先 $MEMORY_DIR，其次 <cwd>/.memory（cwd 未就绪回退进程目录——补全等早触发路径的防御） */
+export function memoryDir(cwd: string | undefined): string {
+	return process.env.MEMORY_DIR ?? join(cwd ?? process.cwd(), ".memory");
 }
 
 /** 确保 entities/verifications 目录骨架存在（写入口与命令派发前调用） */
