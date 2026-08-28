@@ -27,7 +27,7 @@ auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即
 | 字段 | 默认 | 存放 | 说明 |
 |---|---|---|---|
 | `mode` | `manual` | 全局 | 运行挡位 |
-| `autoWatermarkTokens` | 64000 | 全局/项目 | 会话新增 token 达此值触发一次，越小越勤 |
+| `autoWatermarkTokens` | 32000 | 全局/项目 | 会话新增 token 达此值触发一次，越小越勤 |
 | `autoModel` | 缺省用主会话模型 | 全局/项目 | `provider` / `id` / `thinking`（默认 `low`） |
 | `autoMaxTurns` | 12 | 全局/项目 | worker 轮数上限（成本保护） |
 | `autoMemoTools` | read,grep,ls,bash,write,edit | 全局/项目 | record worker 工具白名单 |

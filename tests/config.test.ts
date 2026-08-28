@@ -78,7 +78,7 @@ describe("loadConfig auto 配置", () => {
 
 	it("无配置时使用默认阈值与轮数上限", () => {
 		const config = loadConfig(cwd);
-		expect(config.autoWatermarkTokens).toBe(64_000);
+		expect(config.autoWatermarkTokens).toBe(32_000);
 		expect(config.autoMaxTurns).toBe(12);
 		expect(config.autoModel).toBeUndefined();
 		expect(config.autoMemoTools).toEqual(["read", "grep", "ls", "bash", "write", "edit"]);
@@ -96,7 +96,7 @@ describe("loadConfig auto 配置", () => {
 	it("非法阈值类型/非正数被忽略回默认", () => {
 		settings({ autoWatermarkTokens: "8000", autoMaxTurns: -1 });
 		const config = loadConfig(cwd);
-		expect(config.autoWatermarkTokens).toBe(64_000);
+		expect(config.autoWatermarkTokens).toBe(32_000);
 		expect(config.autoMaxTurns).toBe(12);
 	});
 
