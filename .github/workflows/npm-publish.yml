@@ -1,4 +1,4 @@
-# npm 发布工作流：手动触发或推送 v* tag 时发布到 npm registry
+# npm 发布工作流：手动触发或推送 v* tag 时，经 OIDC（trusted publishing）发布到 npm registry
 name: npm publish
 
 on:
@@ -11,6 +11,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
+      id-token: write  # OIDC 认证（npm trusted publishing），换取短时发布凭证
       contents: read
     steps:
       - uses: actions/checkout@v4
@@ -20,17 +21,17 @@ jobs:
         with:
           bun-version: latest
 
-      # 配置 npm registry 认证（token 在仓库 Secrets 中配置为 NPM_TOKEN）
+      # 配置 npm registry
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      # trusted publishing 要求 npm CLI >= 11.5.1（Node 22 捆绑的 npm 为 10.x）
+      - run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
       - run: bun run test
       - run: bun run typecheck
 
       # 版本号由 package.json 决定，发布前手动升级版本并打 v* tag
       - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
