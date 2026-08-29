@@ -1,13 +1,12 @@
 /**
- * auto 自动挡单元测试：只测纯函数（触发判定 / 素材抽取 / 提示词与参数组装），
- * 不真正 spawn pi 子进程。覆盖四态判定、compaction 回落、防并发、模型参数。
+ * auto 自动挡单元测试：只测纯函数（触发判定 / 冲刷节流与尾部落盘 / 任务参数组装 / 库快照 diff），
+ * 不真正 spawn pi 子进程。素材抽取与提示词组装见 prompts.test.ts。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, snapshotLibrary, splitPending } from "../extension/auto.ts";
-import { buildAgentPrompt, buildWorkerPrompt, extractTranscript, recordTask, verifyTask } from "../extension/prompts.ts";
+import { buildAutoWorkerArgs, clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, shouldFlushOnShutdown, snapshotLibrary, splitPending, writePendingTail } from "../extension/auto.ts";
 import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
 
 /** 收集本次用例生成的临时 worker 目录，统一清理 */
@@ -55,70 +54,65 @@ describe("decideAutoTrigger", () => {
 		expect(trigger).toBe(false);
 		expect(state.baselineTokens).toBe(80_000);
 	});
-});
 
-describe("extractTranscript", () => {
-	it("只取 message 条目，按 role: text 拼接，截断最近几条", () => {
-		const entries = [
-			{ type: "message", message: { role: "user", content: "a" } },
-			{ type: "model_change", provider: "x", modelId: "y" },
-			{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "b" }] } },
-		];
-		const out = extractTranscript(entries, 10);
-		expect(out).toContain("user: a");
-		expect(out).toContain("assistant: b");
-		expect(out).not.toContain("provider");
+	it("触发推进 lastRunTokens（冲刷节流的“刚固化过”标记）", () => {
+		const after = decideAutoTrigger(INITIAL_AUTO_STATE, 10_000, 50_000).state;
+		expect(after.lastRunTokens).toBeNull();
+		const { trigger, state } = decideAutoTrigger(after, 70_000, 50_000);
+		expect(trigger).toBe(true);
+		expect(state.lastRunTokens).toBe(70_000);
 	});
 
-	it("尊重 limit：只取最近 N 条", () => {
-		const entries = Array.from({ length: 5 }, (_, i) => ({ type: "message" as const, message: { role: "user" as const, content: `m${i}` } }));
-		const out = extractTranscript(entries, 3);
-		expect(out).not.toContain("m0");
-		expect(out).toContain("m2");
+	it("未触发不推进 lastRunTokens", () => {
+		const after = decideAutoTrigger(INITIAL_AUTO_STATE, 10_000, 50_000).state;
+		const { state } = decideAutoTrigger(after, 20_000, 50_000);
+		expect(state.lastRunTokens).toBeNull();
 	});
 });
 
-describe("任务与提示词", () => {
-	it("record 任务只含实体面：不引用验证面", () => {
-		const task = recordTask("t");
-		expect(task.formats).toEqual(["entities.md"]);
-		expect(task.formats).not.toContain("verifications.md");
-		expect(task.manuals).not.toContain("verify.md");
+describe("shouldFlushOnShutdown", () => {
+	it("从未跑过：保守冲刷", () => {
+		expect(shouldFlushOnShutdown(null, 5_000, 8_000)).toBe(true);
 	});
 
-	it("验证任务含实体面+验证面，不引用 record 手册", () => {
-		const task = verifyTask([{ id: "x", kind: "tool", state: "stale" }]);
-		expect(task.formats).toEqual(["entities.md", "verifications.md"]);
-		expect(task.manuals).toEqual(["verify.md"]);
-		expect(task.material).toContain("- x [tool] ⏳ 已过期（需复验）");
+	it("token 不可知：保守冲刷", () => {
+		expect(shouldFlushOnShutdown(12_000, null, 8_000)).toBe(true);
 	});
 
-	it("worker 提示词：含手册引用、素材与约束", () => {
-		const prompt = buildWorkerPrompt(recordTask("hello"), "/p/protocol", "/w", 8);
-		expect(prompt).toContain(join("/p/protocol", "entities.md"));
-		expect(prompt).toContain(join("/p/protocol", "record.md"));
-		expect(prompt).not.toContain("verifications.md");
-		expect(prompt).toContain(memoryDir("/w"));
-		expect(prompt).toContain("hello");
-		expect(prompt).toContain("最多 8");
+	it("距上次跑增量达阈值：冲刷", () => {
+		expect(shouldFlushOnShutdown(10_000, 20_000, 8_000)).toBe(true);
 	});
 
-	it("worker 提示词：记忆库根尊重 MEMORY_DIR 覆盖", () => {
-		process.env.MEMORY_DIR = "/custom/memory";
-		try {
-			const prompt = buildWorkerPrompt(recordTask(), "/p/protocol", "/w", 8);
-			expect(prompt).toContain("/custom/memory");
-			expect(prompt).not.toContain("/w/.memory");
-		} finally {
-			delete process.env.MEMORY_DIR;
-		}
+	it("增量不足（含 compact 回落）跳过", () => {
+		expect(shouldFlushOnShutdown(10_000, 13_000, 8_000)).toBe(false);
+		expect(shouldFlushOnShutdown(20_000, 5_000, 8_000)).toBe(false);
+	});
+});
+
+describe("会话边界尾部落盘", () => {
+	let cwd: string;
+	beforeEach(() => {
+		cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-tail-"));
+		process.env.MEMORY_DIR = join(cwd, ".memory");
+	});
+	afterEach(() => {
+		delete process.env.MEMORY_DIR;
 	});
 
-	it("主会话提示词：精简无约束，含手册与素材", () => {
-		const prompt = buildAgentPrompt(verifyTask([{ id: "x", kind: "concept", state: "none" }]), "/p/protocol");
-		expect(prompt).toContain(join("/p/protocol", "verify.md"));
-		expect(prompt).toContain("- x [concept] ❓ 未验证");
-		expect(prompt).not.toContain("at most");
+	it("落盘后可并入下次 record 素材", () => {
+		writePendingTail(cwd, "旧会话尾巴素材");
+		expect(collectTranscriptWithPending(cwd, "当前会话素材")).toBe("当前会话素材\n\n[上一会话未固化尾部]\n旧会话尾巴素材");
+	});
+
+	it("无落盘时素材原样", () => {
+		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
+	});
+
+	it("record 成功后清理：清理后不再并入", () => {
+		writePendingTail(cwd, "tail");
+		clearPendingTail(cwd);
+		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
+		expect(existsSync(join(memoryDir(cwd), "pending.md"))).toBe(false);
 	});
 });
 

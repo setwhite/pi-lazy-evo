@@ -80,6 +80,7 @@ describe("loadConfig auto 配置", () => {
 		const config = loadConfig(cwd);
 		expect(config.autoWatermarkTokens).toBe(32_000);
 		expect(config.autoMaxTurns).toBe(16);
+		expect(config.autoFlushMinTokens).toBe(8_000);
 		expect(config.autoModel).toBeUndefined();
 		expect(config.autoMemoTools).toEqual(["read", "grep", "ls", "bash", "write", "edit"]);
 		expect(config.autoVerifyTools).toEqual(["read", "grep", "ls", "bash", "write", "edit", "web_search", "web_fetch"]);
@@ -91,6 +92,15 @@ describe("loadConfig auto 配置", () => {
 		expect(config.autoWatermarkTokens).toBe(8000);
 		expect(config.autoMaxTurns).toBe(8);
 		expect(config.autoModel).toEqual({ provider: "openrouter", id: "a-cheap-model", thinking: "low" });
+	});
+
+	it("可配置冲刷节流阈值：0 合法（有素材即冲刷），负数忽略回默认", () => {
+		settings({ autoFlushMinTokens: 4000 });
+		expect(loadConfig(cwd).autoFlushMinTokens).toBe(4000);
+		settings({ autoFlushMinTokens: 0 });
+		expect(loadConfig(cwd).autoFlushMinTokens).toBe(0);
+		settings({ autoFlushMinTokens: -5 });
+		expect(loadConfig(cwd).autoFlushMinTokens).toBe(8000);
 	});
 
 	it("非法阈值类型/非正数被忽略回默认", () => {
