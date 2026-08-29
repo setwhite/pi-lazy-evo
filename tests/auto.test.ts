@@ -1,25 +1,14 @@
 /**
- * auto 自动挡单元测试：只测纯函数（触发判定 / 尾部落盘 / 任务参数组装 / 库快照 diff），
- * 不真正 spawn pi 子进程。素材抽取与提示词组装见 prompts.test.ts。
+ * auto 自动挡单元测试：只测纯函数（触发判定 / 尾部落盘 / 切块 / 库快照 diff），
+ * 不真正 spawn worker。子进程通道见 worker.test.ts，素材与提示词见 prompts.test.ts。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, hasPendingTail, INITIAL_AUTO_STATE, splitPending, writePendingTail } from "../extension/auto.ts";
+import { clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, hasPendingTail, INITIAL_AUTO_STATE, splitPending, writePendingTail } from "../extension/auto.ts";
 import { diffLibrary, formatChanges, snapshotLibrary } from "../extension/library.ts";
 import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
-
-/** 收集本次用例生成的临时 worker 目录，统一清理 */
-const tempDirs: string[] = [];
-afterEach(() => {
-	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
-
-function withCleanup<const T extends { promptDir: string }>(built: T): T {
-	tempDirs.push(built.promptDir);
-	return built;
-}
 
 describe("decideAutoTrigger", () => {
 	it("首次观察吸收基线，不触发", () => {
@@ -91,32 +80,6 @@ describe("会话边界尾部落盘", () => {
 		clearPendingTail(cwd);
 		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
 		expect(existsSync(join(memoryDir(cwd), "pending.md"))).toBe(false);
-	});
-});
-
-describe("buildAutoWorkerArgs", () => {
-	it("配置了便宜模型：组装 --model provider/id 与 --thinking，写提示词文件", () => {
-		const built = withCleanup(buildAutoWorkerArgs({ model: { provider: "openrouter", id: "a-model", thinking: "low" }, tools: ["read", "bash"], promptContent: "P" }));
-		expect(built.args).toContain("--model");
-		expect(built.args).toContain("openrouter/a-model");
-		expect(built.args).toContain("--thinking");
-		expect(built.args).toContain("--append-system-prompt");
-		expect(existsSync(built.promptFile)).toBe(true);
-	});
-
-	it("未配置模型：不带 --model，仍写提示词文件", () => {
-		const built = withCleanup(buildAutoWorkerArgs({ promptContent: "P", tools: ["read"] }));
-		expect(built.args).not.toContain("--model");
-		expect(built.args).toContain("-p");
-		expect(built.args).toContain("--no-session");
-		expect(built.args).not.toContain("--mode"); // 无管道通道：不输出事件流，无需 json 模式
-	});
-
-	it("工具白名单以逗号拼接传给 --tools（默认验证集含 web）", () => {
-		const built = withCleanup(buildAutoWorkerArgs({ promptContent: "P", tools: ["read", "grep", "bash", "web_search", "web_fetch"] }));
-		const idx = built.args.indexOf("--tools");
-		expect(idx).toBeGreaterThan(-1);
-		expect(built.args[idx + 1]).toBe("read,grep,bash,web_search,web_fetch");
 	});
 });
 

@@ -222,7 +222,7 @@ describe("/memory mode", () => {
 		const s = createSession();
 		await s.run("mode auto");
 		expect(s.notified.some((t) => t.includes("Mode switched to auto"))).toBe(true);
-		expect(s.notified.some((t) => t.includes("commands + background record & verify"))).toBe(true);
+		expect(s.notified.some((t) => t.includes("commands + auto record & verify"))).toBe(true);
 		await s.run("mode");
 		expect(s.notified.some((t) => t.includes("auto"))).toBe(true);
 	});

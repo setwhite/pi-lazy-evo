@@ -1,6 +1,6 @@
 /**
  * 库变化检测域：worker 前后的库快照 + 差异判定 + 通知文案。
- * 成败不以子进程退出码判定（无管道通道），而以文件系统快照 diff 判定。
+ * 成败以文件系统快照 diff 判定（子进程事件流只用于活动展示，退出码仅兑底报错）。
  * 验证记录 key 用相对 verifications 根的路径：子目录化后 basename 会跨实体重复。
  */
 import { relative } from "node:path";

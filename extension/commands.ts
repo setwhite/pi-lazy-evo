@@ -158,13 +158,13 @@ async function verify(args: string, ctx: ExtensionCommandContext, runtime: Runti
 
 /** 模式含义（一行文案） */
 const MODE_LABEL: Record<MemoryMode, string> = {
-	auto: "commands + background record & verify",
+	auto: "commands + auto record & verify (live activity panel)",
 	manual: "commands only",
 };
 
 /** 未配置 autoModel 的提醒（切 auto / overview 时提示） */
 const AUTO_MODEL_HINT =
-	"autoModel not configured: auto background tasks will use the main session model. Recommended: configure a cheap model (provider / id / thinking) under the pi-lazy-evo namespace in global settings.json.";
+	"autoModel not configured: auto tasks will use the main session model. Recommended: configure a cheap model (provider / id / thinking) under the pi-lazy-evo namespace in global settings.json.";
 
 /** /memory mode [auto|manual]：查看或切换挡位（只写全局 settings.json，不影响 prompt cache） */
 async function mode(args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
