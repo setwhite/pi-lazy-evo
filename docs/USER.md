@@ -1,8 +1,7 @@
 # 用户指南
 
-`/memory` 是唯一入口，6 个子命令。命令只是扳机：读写与验证由代理按
-`extension/protocol/` 手册执行，扩展不注入专用工具。输入 `/memory ` 自动弹出子命令候选，
-裸 `/memory` 或 `/memory help` 显示帮助。
+`/memory` 是唯一入口，6 个子命令。命令只是扳机：读写与验证由代理按 `extension/protocol/` 手册执行，
+扩展不注入专用工具。输入 `/memory ` 自动弹出子命令候选，裸 `/memory` 或 `/memory help` 显示帮助。
 
 ## 命令
 
@@ -18,18 +17,20 @@
 ## 挡位
 
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库
-- `auto`：会话进行中按 token 水位触发，会话离开时尾部素材落盘、下次启动立即固化，后台便宜模型自动 record + verify（均带 TUI 通知）
+- `auto`：会话按 token 水位自动跑 record + verify；离开会话时尾部素材落盘、下次启动立即固化。
+  worker 在前台可见：编辑器上方活动面板每个 worker 一行，实时显示"第几轮 · 正在做什么"
+  （record / verify#1 / verify#2 …），结束即清除并汇总一条通知
 
-auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即用）。分两个来源：
-- **mode** 只存全局 `~/.pi/agent/settings.json`——用户偏好，不入库不随仓库分发；`/memory mode` 切换的就是它
-- 其余字段全局与项目 `.pi/settings.json` 合并，项目覆盖全局
+auto 配置在 `pi-lazy-evo` 命名空间（实时生效，改完即用）。mode 只存全局
+`~/.pi/agent/settings.json`（用户偏好，不入库不随仓库分发，`/memory mode` 切换的就是它）；
+其余字段全局与项目 `.pi/settings.json` 合并，项目覆盖全局。
 
 | 字段 | 默认 | 存放 | 说明 |
 |---|---|---|---|
 | `mode` | `manual` | 全局 | 运行挡位 |
 | `autoWatermarkTokens` | 32000 | 全局/项目 | 会话新增 token 达此值触发一次，越小越勤 |
 | `autoModel` | 缺省用主会话模型 | 全局/项目 | `provider` / `id` / `thinking`（默认 `low`） |
-| `autoMaxTurns` | 16 | 全局/项目 | worker 轮数上限（提示词软约束；主进程存活时另有 10 分钟超时强杀进程树兑底） |
+| `autoMaxTurns` | 16 | 全局/项目 | worker 轮数上限（提示词软约束；另有 10 分钟超时强杀兜底） |
 | `autoMemoTools` | read,grep,ls,bash,write,edit | 全局/项目 | record worker 工具白名单 |
 | `autoVerifyTools` | 左列 + web_search,web_fetch | 全局/项目 | verify worker 工具白名单 |
 
@@ -45,7 +46,7 @@ auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即
 
 白名单是**替换**语义：填了就按填的来，别漏 read/grep/write。联网验证依赖搜索 provider，
 先 `/web-tools` 配好再开 auto。未配置 `autoModel` 时切 auto / 看 overview 会提示配置
-（缺省将用主会话模型跑后台任务，注意成本）。全局 settings 路径可用 `PI_GLOBAL_SETTINGS_FILE`
+（缺省将用主会话模型跑自动任务，注意成本）。全局 settings 路径可用 `PI_GLOBAL_SETTINGS_FILE`
 覆盖（多用户隔离/测试）。
 
 ## 门控四态
@@ -62,14 +63,13 @@ auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即
 
 改正文不用删验证记录——记录只追加，时间戳规则自动把实体降为 stale。描述本仓库代码/配置
 行为的实体可在 front-matter 声明 `depends-on`（仓库内相对路径）：代码一变，对应实体的
-passed 自动降 stale，无需人工发现；失效由"最新验证时刻 vs 文件 mtime"实时推导，无缓存文件。
+passed 自动降 stale，无需人工发现；失效实时推导，无缓存文件。
 
 ## 验证记录
 
 每次验证追加一条记录到 `verifications/<实体id>/` 子目录（按实体归位，同日多条自动加序号）：
 front-matter 四字段（target / validator / checked_at / result），证据写在正文、必填；
-正文每句断言带编号（`A1:`…，新增与修正时生效），failed 记录首行列无效断言编号，
-让修正有精确落点。记录只追加不覆盖，历史可审计。
+failed 记录首行列无效断言编号，让修正有精确落点。记录只追加不覆盖，历史可审计。
 验证器取值见 `extension/protocol/verifications.md`，代理按手册执行，用户不直接操作。
 
 ## 记忆库

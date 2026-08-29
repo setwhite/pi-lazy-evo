@@ -4,127 +4,76 @@
 
 `.memory/` 实体记忆库的治理协议 + pi 扩展：
 
-- **协议**（`extension/protocol/`）：实体与验证记录的格式、record/verify 操作手册，
-  是代理操作记忆库的唯一真相源；
+- **协议**（`extension/protocol/`）：实体与验证记录的格式、record/verify 操作手册，代理操作记忆库的唯一真相源；
 - **扩展**（TypeScript）：`/memory` 命令入口、门控计算、挡位与 auto worker；
-- **零工具注入**：扩展不注册专用工具，代理用通用工具（grep/read/write/bash）按手册
-  操作 `.memory/`。工具集不被污染、prompt cache 不受影响、协议迭代无需扩展发版。
+- **零工具注入**：扩展不注册专用工具，代理用通用工具（grep/read/write/bash）按手册操作 `.memory/`。
+  工具集不被污染、prompt cache 不受影响、协议迭代无需扩展发版。
 
-## 目录结构
+## 结构与依赖
 
 ```
-pi-lazy-evo/
-├── extension/       # 扩展实现
-│   ├── index.ts         # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令 + auto 钩子
-│   ├── commands.ts      # 单一 /memory 入口：子命令表（路由/帮助/补全单一数据源）+ 6 个子命令
-│   ├── auto.ts          # auto 挡：水位判定 / 启动冲刷 / 尾部落盘 + 无管道 spawn
-│   ├── library.ts       # 库快照与 diff（auto 挡结果通知的数据基础）
-│   ├── prompts.ts       # 代理任务纯数据（AgentTask）+ 提示词组装注入（主会话/worker 共用）
-│   ├── store.ts         # 存储域：布局 / 实体 / 验证记录（子目录）/ 全库配对
-│   ├── gate.ts          # 门控域：四态推导 / 依赖失效覆盖 / 待验筛选 / 全库摘要（纯计算，无 IO）
-│   ├── deps.ts          # 统一读库入口 gatedLibrary：读库 → 门控 → depends-on 失效叠加
-│   ├── config.ts        # settings 命名空间读写（pi-lazy-evo）
-│   ├── utils.ts         # 纯工具：frontmatter / 校验 / 文本提取 / 通知
-│   └── protocol/        # 协议手册（代理执行契约）
-├── tests/               # bun:test 单元测试（按域拆分）
-├── docs/                # 用户指南 / 架构设计 / 开发指南（随 npm 包分发）
-└── .github/workflows/   # npm 发布（OIDC trusted publishing）
+extension/
+├── index.ts       # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令与 auto 钩子
+├── commands.ts    # /memory 单一入口：子命令表（路由/帮助/补全单一数据源）
+├── auto.ts        # auto 挡：水位判定 / 启动冲刷 / 尾部落盘 + 任务编排
+├── worker.ts      # worker 子进程通道：--mode json 事件流 → 活动面板（前台可见）
+├── library.ts     # 库快照与 diff（auto 挡结果通知的数据基础）
+├── prompts.ts     # AgentTask 纯数据 + 提示词组装（主会话/worker 共用）
+├── store.ts       # 存储域：布局 / 实体 / 验证记录（尽力解析 + 非法忽略）
+├── gate.ts        # 门控域：四态推导 / 依赖失效 / 待验筛选（纯计算，无 IO）
+├── deps.ts        # 统一读库入口 gatedLibrary(cwd)
+├── config.ts      # settings.json pi-lazy-evo 命名空间读写
+├── utils.ts       # 纯工具：frontmatter / 校验 / 文本提取 / 通知
+└── protocol/      # 协议手册（代理执行契约）
 ```
 
-依赖方向 `index → {commands, auto} → {prompts, gate, store, deps} → utils`；utils 最底层
-（纯工具，无 IO 无业务），store 不依赖上层；gate 纯推导，mtime 能力由 deps 注入。
-
-模块边界：
-
-- `commands.ts` 只做"解析输入 → 调 gate/prompts → 通知"，业务聚合在 gate；
-- `prompts.ts` 是任务纯数据（要代理干什么）+ 组装注入，
-  手动命令（主会话）与 auto worker（子进程）共用同一套任务语义；
-- `auto.ts` 只做触发编排（水位判定 / 启动冲刷 → 串行双任务）与子进程通道，任务语义来自 prompts；
-- `store.ts` 一个文件承载存储域（布局 / 实体 / 验证记录 / 全库配对），读取层"尽力解析 + 非法忽略"；
-- 一切读库入口统一走 `deps.ts` 的 `gatedLibrary(cwd)`，调用方不自行拼装 readLibrary/gateLibrary。
+依赖方向 `index → {commands, auto} → {worker, prompts, library, gate, store, deps} → utils`。
+边界约定：一切读库走 `deps.gatedLibrary`；`commands` 只做"解析 → 调 gate/prompts → 通知"；
+`auto` 只做触发编排与任务串行/并发，任务语义来自 `prompts`；`prompts` 是任务纯数据，
+不复述手册内容（规则以 protocol/ 为唯一真相源）；`worker` 只管子进程通道与活动呈现。
 
 ## 数据模型
 
-```
-.memory/
-├── entities/          # 实体：一个文件一张
-└── verifications/     # 验证记录：verifications/<id>/<日期>[-N].md，按实体归位，只追加
-```
+实体 `entities/<id>.md` 与验证记录 `verifications/<id>/<日期>[-N].md` 的字段、编号与时间戳规则
+以 `protocol/entities.md`、`protocol/verifications.md` 为准，代码不重复这些规则，
+读取层只做"尽力解析 + 非法忽略"的严格读取（包裹引号会剥离）。
 
-**实体**（`entities/<id>.md`）：front-matter 为 id / kind / sources 三必填字段 + 可选
-depends-on（仓库内相对路径，逗号分隔）；正文每句一个可验证断言，新增/修正的实体带编号
-（`A1:`、`A2:`…，编号不复用，修正落点按编号定位）。文件名即 id，信任不放在正文里。
-
-**验证记录**（`verifications/<id>/<日期>[-N].md`，日期只防重名，门控不读文件名）：
-front-matter 恰好 target / validator / checked_at / result 四字段，证据写在正文（必填）；
-failed 记录正文首行是无效断言编号清单，驱动"修正→stale→复验"闭环。
-
-字段取值与校验规则以 `extension/protocol/entities.md` / `verifications.md` 为准，
-代码不重复这些规则，只做"尽力解析 + 非法忽略"的严格读取。
-
-**门控四态**：取实体最新验证记录（checked_at 最大），对比正文 mtime 与 depends-on 文件 mtime：
-
-| 条件 | 状态 |
-|---|---|
-| 无任何记录 | ❓ none |
-| 最新记录 passed 且晚于正文修改 | ✅ passed |
-| 最新记录 failed 且晚于正文修改 | ⚠️ failed |
-| 最新记录早于正文修改（超容差） | ⏳ stale |
-| passed，但任一 depends-on 文件在该次验证后改过 | ⏳ stale |
-
-3 秒容差（`GRACE_MS`）抵消粗粒度文件系统（容器挂载 / SMB / FAT32）的时间戳取整。
-门控不落盘、每次实时推导（含依赖失效：比较锚点是最新 passed 记录时刻，复验即自愈，
-无基线缓存文件）；格式非法的实体与记录一律忽略（front-matter 损坏、id/kind
-缺失、target 不精确匹配、checked_at 非完整 ISO、result 非法；字段值的包裹引号会剥离）。
+**门控四态**（❓none / ✅passed / ⚠️failed / ⏳stale）每次由"最新记录 checked_at vs
+正文 mtime vs depends-on 文件 mtime"实时推导，不落盘、无缓存文件；
+3 秒容差（`GRACE_MS`）抵消粗粒度文件系统的时间戳取整。语义表见 protocol/verifications.md。
 
 ## 命令流
 
-`/memory` 按参数第一词路由（pi 只匹配 `/` 后第一个词，多词命令名不可达）。
-补全两级：子命令词 + 参数候选（mode 静态列表，verify 动态读库列实体 id）。
-pi 传的补全 prefix 是 `/memory` 后完整参数串、选中值整体替换，因此参数候选的
-value 必须带子命令词（如 `mode auto`）。
+`/memory` 按参数第一词路由（pi 派发只匹配 `/` 后第一个词，多词命令名不可达）。
+补全两级：子命令词 + 参数候选；pi 选中值整体替换参数串，因此参数候选 value 须带子命令词（如 `mode auto`）。
 
-- `overview`：读库 → 门控 → 四态计数 + 待修正/待验清单（failed 优先展示），只展示不注入
-- `record [note]`：注入记录任务（note 作为附注素材），代理自行完成读协议 → 检索 → 写入
-- `query [terms]`：扩展算好全库索引（门控态预计算）注入，grep 与相关性判断靠代理自带工具
-- `verify [id]`：读库 → 门控 → `selectPending`（无 id 选 none/stale 验证 + failed 修正，有 id 全量复验）→ 注入清单；failed 实体先按最新记录的无效断言编号修正正文再复验，禁止对未修正正文重复验证
-- `mode [auto|manual]`：读写全局 settings.json 的 `pi-lazy-evo` 命名空间（mode 只存全局、不随仓库分发），不改任何模型可见面
+- `overview`：读库 → 门控 → 展示四态计数与待修正/待验清单（不注入）
+- `record` / `query` / `verify`：`recordTask / queryTask / verifyTask → injectTask` 注入主会话，
+  代理按协议执行；职责边界——扩展只把清单/索引算好注入，动作本身交给代理
+- `mode`：读写全局 settings.json 的 `pi-lazy-evo` 命名空间（mode 只存全局，不改任何模型可见面）
 
-手动命令与 auto 挡共用注入链路：`selectPending → verifyTask / recordTask → injectTask`。
-职责边界：`/memory verify` 只把清单算好注入，验证动作本身交给代理执行。
+手动命令与 auto 挡共用同一套 AgentTask 语义，仅通道不同：手动走主会话注入，auto 走 worker 子进程。
 
 ## auto 挡
 
-挂在 `turn_end`（水位触发）与 `session_start`（启动冲刷尾部素材）事件上：判定（纯函数）→
-record（串行单任务）→ verify（并行批次），两条触发通道同一套 runAutoTasks（均带 TUI 通知）；
-`session_shutdown` 只尾部落盘（纯 IO，不 spawn）。
+turn_end 水位触发 + session_start 启动冲刷，两条通道同一套 runAutoTasks；
+session_shutdown 只把会话尾部落盘 `.memory/pending.md`（纯 IO，不 spawn）。
 
-**水位判定**（`decideAutoTrigger`）：会话累计 token 与基线之差达到 `autoWatermarkTokens`
-触发一次。三个防循环规则：
+**水位判定**（`decideAutoTrigger`，纯函数）：会话累计 token 增量达到 `autoWatermarkTokens` 触发一次。
+三个防循环规则：首次观察只吸收基线；token 回落（compaction）重设基线；worker 在跑（inFlight）时吸收增量。
 
-- 首次观察只吸收基线，不触发
-- token 回落（compaction）重设基线，不触发
-- worker 在跑（inFlight）时吸收增量，结束后不重复触发
+**worker 子进程（前台可见）**：提示词写临时文件，spawn `pi --mode json --no-session`，
+`--tools` 白名单、`--model` 便宜模型（缺省主模型）、`--thinking low`。
+stdout 事件流逐行解析（`turn_start` / `tool_execution_start`），每个 worker 在活动面板
+（`ctx.ui.setWidget`，编辑器上方）占一行，全部结束后面板清除、汇总一条通知。
+成败仍以库快照 diff 判定（事件流只做展示，退出码仅兜底报错）；主进程存活期 10 分钟超时强杀进程树；
+主进程退出后管道断裂，worker 随会话终止（前台语义，不留孤儿）。
 
-**worker 子进程（无管道通道）**：任务提示词写入临时文件，spawn 独立 `pi -p --no-session`
-子进程，`--tools` 传白名单、`--model` 传便宜模型（缺省主模型）、`--thinking low`。
-`spawn` 用 `non-detached + unref + stdio 全 ignore`：继承父控制台不弹窗（detached 在
-Windows 必弹新控制台）；超时兜底与结果判定依赖主进程存活——主进程退出后 worker 不随之终止
-（POSIX 变孤儿继续跑，Windows 视关闭方式可能连带终止）。轮数上限 `autoMaxTurns` 只是提示词
-软约束；主进程存活期另有 10 分钟超时强杀进程树兑底（`killWorkerTree`）；worker 成败由调用方用库快照 diff 判定，不读子进程输出。
+**verify 并行批次**：待办实体（含 failed 修正流）按 `splitPending` 切块（块数 ≤ 并发上限 8），
+每块一个子进程并发跑；批次前后统一快照 diff，汇总一条通知（`verify×N`）。
 
-**verify 并行批次**：待办实体（含 failed 修正流）按 `splitPending` 切块（块数 ≤ 并发上限 8），每块一个子进程
-并发跑；批次前后统一快照 diff，汇总一条通知（`verify×N` + 结果/失败明细）。
-
-**结果通知**：worker 前后各拍一次库快照（实体 id→mtime + 验证记录文件名→target/result），
-diff 后汇总通知（英文文案）：record 报 `+ <id> / ~ <id>`，verify 报 `+ verified: <id> ✅/⚠️`。
-事件 ctx 在会话替换后失效，通知走带 stale 兑底的闭包（`guardNotify`），降级 console。
-
-**会话边界落盘（session_shutdown）+ 启动冲刷（session_start）**：水位窗口之外的会话尾部增量
-在会话离开时全量 transcript 落盘 `.memory/pending.md`（全 reason 统一，纯 IO 覆盖写，
-不 spawn worker——主进程存活与 worker 执行都不可靠，Windows 控制台连坐）。
-下次 session_start 发现尾部素材立即跑 record + verify（新 ctx，带通知）；启动固化失败则
-pending 保留，退回下次水位触发合并素材兑底。
+**ctx 生命周期**：事件 ctx 在会话替换（new/resume/reload）后失效，不得跨 await 持有——
+处理器内只取纯值（cwd/transcript），通知与活动面板走 stale 兜底闭包（guardNotify / guardActivity）。
 
 ## 设计决策
 
@@ -133,17 +82,10 @@ pending 保留，退回下次水位触发合并素材兑底。
 | 零工具注入 | 工具集不污染、prompt cache 不受影响、协议迭代无需发版 |
 | grep 检索而非向量索引 | 库小、零依赖、无预计算 |
 | 验证只追加不覆盖 | 可审计 |
-| 门控实时计算 | 状态永远由实体 + 验证记录两个唯一真相推出 |
-| 依赖失效纯推导，否决 state.json | 早期"门控缓存落盘"实现后被发现：缓存字段只写不读、门控仍需全量重算；改以"最新 passed 记录时刻 vs 依赖 mtime"推导，自愈且少一个状态文件 |
-| 断言编号不回填存量 | 存量实体批量加编号是纯迁移债；修正/新增时自然生效，failed 记录首行无效编号清单驱动修正 |
+| 门控实时计算、否决 state.json | 状态永远由实体+验证记录两个真相推出；早期缓存落盘实现被发现字段只写不读 |
+| 断言编号不回填存量 | 批量迁移是纯债；修正/新增自然生效，failed 记录首行编号清单驱动修正 |
 | 任务语义两条通道共用 | 手动与 auto 同一套 AgentTask，改动只在一处 |
+| 手册唯一真相源，提示词不复述 | 改手册即改行为，不用动代码；提示词短、省 token |
+| 事件流只做活动展示 | 成败以文件系统快照判定，UI 通道与正确性解耦 |
 | query 门控预计算注入 | 死板计算留在扩展代码，代理只做语义判断 |
-| 模式切换只写全局 settings.json | mode 是用户偏好：不入库、不随仓库分发、不被 git 覆盖；工具集/提示词不变，切换不影响 prompt cache |
-
-## pi 行为事实（SDK 源码验证）
-
-- 命令派发只匹配 `/` 后第一个词 → 单一 memory 入口 + args 路由；
-- Tab 不触发命令补全，候选自动弹出；补全 prefix 是 `/memory` 后完整参数串，
-  选中值整体替换该串（参数候选 value 须带子命令词，如 `mode auto`）；
-- 扩展发现：`~/.pi/agent/extensions/`（全局）、`.pi/extensions/`（项目，信任后加载），
-  支持符号链接。
+| mode 只写全局 settings.json | 用户偏好：不入库、不随仓库分发；切换不改模型可见面，不影响 prompt cache |

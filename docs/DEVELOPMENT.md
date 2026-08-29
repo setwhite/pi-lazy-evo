@@ -13,16 +13,14 @@ bun run typecheck   # tsc strict，零错误
 
 ## 目录职责
 
-依赖方向 `index → {commands, auto} → {prompts, gate, store, deps} → utils`：
+依赖方向与边界约定见 `docs/ARCHITECTURE.md`，此处只列开发要点：
 
 - `utils.ts` 只放确定性小工具（frontmatter / 校验 / 文本提取 / 通知，无 IO 无业务）
-- `store.ts` 存储域整体（布局 / 实体 / 验证记录子目录 / 全库配对），读取层"尽力解析 + 非法忽略"
-- `gate.ts` 门控域纯函数（四态推导 / 依赖失效覆盖 / 待验筛选 / 全库摘要，无 IO）
-- `deps.ts` 统一读库入口 `gatedLibrary(cwd)`（读库 → 门控 → depends-on 失效叠加，无任何落盘）
-- `library.ts` 库快照与 diff（auto 挡通知，自 auto.ts 拆出）
-- `prompts.ts` 任务纯数据（AgentTask）+ 组装注入；手动命令与 auto worker 共用同一任务语义
-- `commands.ts` 只做"解析输入 → 调 gate/prompts → 通知"，业务聚合在 gate
-- `auto.ts` 水位判定 + 串行编排 + spawn 子进程 + 库快照 diff
+- `store.ts` 存储域整体，读取层"尽力解析 + 非法忽略"
+- `gate.ts` 门控域纯函数（无 IO），mtime 能力由 `deps.ts` 注入
+- 一切读库入口统一走 `deps.ts` 的 `gatedLibrary(cwd)`，调用方不自行拼装
+- `prompts.ts` 任务纯数据 + 组装注入；提示词不复述 protocol/ 手册内容
+- `worker.ts` 子进程通道：`pi --mode json` 事件流 → WorkerFeed（单行活动文本）→ ActivityPanel（行集渲染）
 - settings 命名空间统一 `pi-lazy-evo`（`config.ts` 的 NAMESPACE，测试断言同步）
 
 ## 编码约定
@@ -34,24 +32,16 @@ bun run typecheck   # tsc strict，零错误
 
 所有子命令挂在唯一 `memory` 入口（pi 派发只匹配第一词）。新增 `/memory foo`：
 
-1. 在 `commands.ts` 的 `SUBCOMMANDS` 表加一条：导出 `foo(args, ctx, runtime)`（统一签名，
-   展示类命令忽略 runtime），写入同文件
+1. 在 `commands.ts` 的 `SUBCOMMANDS` 表加一条：导出 `foo(args, ctx, runtime)`（统一签名，展示类命令忽略 runtime）
 2. 需参数补全时给 `argValues`（静态列表，或动态候选函数，如 verify 读库列实体 id）
 3. 在 `tests/commands.test.ts` 加用例；`docs/USER.md` 补用法
 
-需"读库→门控→注入"的命令参照 verify：
-`gatedLibrary → selectPending → verifyTask + injectTask → notify`（不要绕过 gatedLibrary 自行拼装）。
+需"读库→门控→注入"的命令参照 verify：`gatedLibrary → selectPending → verifyTask + injectTask → notify`。
 
 ## 协议手册
 
-`protocol/*.md` 是代理执行契约，格式的唯一真相源。代码不重复这些规则（读取层只做
-"尽力解析 + 非法忽略"），改格式时同步协议与 docs：
-
-- 记格式 `entities.md`、记操作 `record.md`
-- 验格式 `verifications.md`、验操作 `verify.md`
-- 用户视角（命令/配置/状态表）`docs/USER.md`
-- 设计动机 `docs/ARCHITECTURE.md`
-
+`protocol/*.md` 是代理执行契约，格式与操作规则的唯一真相源——代码与提示词都不复述，
+改手册即改行为；改格式时同步 `docs/USER.md`（用户视角）与 `docs/ARCHITECTURE.md`（设计动机）。
 测试不覆盖协议文本，靠 store 读取的严格性测试兜底（非法一律忽略）。
 
 ## 测试结构
@@ -59,25 +49,21 @@ bun run typecheck   # tsc strict，零错误
 | 文件 | 覆盖 |
 |---|---|
 | store.test.ts | 存储域：实体/验证记录读写、严格性、整库配对 |
-| gate.test.ts | 门控聚合纯函数（含 3s 容差、四态推导、筛选与摘要） |
-| deps.test.ts | 依赖失效纯推导（passed 后依赖变化降级、复验自愈、缺失/无依赖不受影响） |
+| gate.test.ts | 门控聚合纯函数（3s 容差、四态推导、筛选与摘要） |
+| deps.test.ts | 依赖失效纯推导（passed 后依赖变化降级、复验自愈） |
 | config.test.ts | settings.json 读写（pi-lazy-evo 命名空间） |
 | commands.test.ts | 命令注册、路由、两级补全、注入（独立会话工厂） |
-| prompts.test.ts | 素材抽取、任务纯数据、主会话/worker 提示词组装 |
-| auto.test.ts | 触发判定、冲刷节流与尾部落盘、worker 参数组装、库快照 diff |
+| prompts.test.ts | 素材抽取、任务纯数据、两条通道提示词组装 |
+| auto.test.ts | 触发判定、尾部落盘、切块、库快照 diff |
+| worker.test.ts | worker 参数组装、事件流活动描述、活动面板行管理 |
 
 ## 发布
 
 ```bash
-# 1) package.json 升版本（npm 不允许覆盖已发布版本，升级后再打 tag）
-# 2) 打 v* tag 触发 .github/workflows/npm-publish.yml
-git tag v0.2.0 && git push origin v0.2.0
+# package.json 升版本（npm 不允许覆盖已发布版本）后打 tag 触发 npm-publish.yml
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
-发布经 npm trusted publishing（OIDC）认证，无需 API token。两个精确匹配约束：
-npm 页面的 workflow 文件名（`npm-publish.yml`）与 `package.json` 的 `repository.url`
-必须与仓库一致，否则发布失败；workflow 跑测试与类型检查通过后 `npm publish`，
-自动生成 provenance 来源证明。
-
-发布内容由 `files` 白名单决定（extension + docs）：改文档后需发版，包内 `docs/`
-与 npm 页面 README 才会更新。
+经 npm trusted publishing（OIDC）认证，无需 token。npm 页面的 workflow 文件名
+（`npm-publish.yml`）与 `package.json` 的 `repository.url` 必须与仓库一致，否则发布失败。
+发布内容由 `files` 白名单决定（extension + docs），改文档后需发版才会同步 npm 页面。
