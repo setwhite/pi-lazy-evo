@@ -17,7 +17,7 @@ pi-lazy-evo/
 ├── extension/       # 扩展实现
 │   ├── index.ts         # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令 + auto 钩子
 │   ├── commands.ts      # 单一 /memory 入口：子命令表（路由/帮助/补全单一数据源）+ 6 个子命令
-│   ├── auto.ts          # auto 挡：turn_end 水位判定 + record/verify 派发 + 无管道 spawn
+│   ├── auto.ts          # auto 挡：水位判定 / 启动冲刷 / 尾部落盘 + 无管道 spawn
 │   ├── library.ts       # 库快照与 diff（auto 挡结果通知的数据基础）
 │   ├── prompts.ts       # 代理任务纯数据（AgentTask）+ 提示词组装注入（主会话/worker 共用）
 │   ├── store.ts         # 存储域：布局 / 实体 / 验证记录（子目录）/ 全库配对
@@ -39,7 +39,7 @@ pi-lazy-evo/
 - `commands.ts` 只做"解析输入 → 调 gate/prompts → 通知"，业务聚合在 gate；
 - `prompts.ts` 是任务纯数据（要代理干什么）+ 组装注入，
   手动命令（主会话）与 auto worker（子进程）共用同一套任务语义；
-- `auto.ts` 只做触发编排（水位判定 → 串行双任务）与子进程通道，任务语义来自 prompts；
+- `auto.ts` 只做触发编排（水位判定 / 启动冲刷 → 串行双任务）与子进程通道，任务语义来自 prompts；
 - `store.ts` 一个文件承载存储域（布局 / 实体 / 验证记录 / 全库配对），读取层"尽力解析 + 非法忽略"；
 - 一切读库入口统一走 `deps.ts` 的 `gatedLibrary(cwd)`，调用方不自行拼装 readLibrary/gateLibrary。
 
@@ -95,7 +95,9 @@ value 必须带子命令词（如 `mode auto`）。
 
 ## auto 挡
 
-挂在 `turn_end` 事件上：水位判定（纯函数）→ record（串行单任务）→ verify（并行批次）。
+挂在 `turn_end`（水位触发）与 `session_start`（启动冲刷尾部素材）事件上：判定（纯函数）→
+record（串行单任务）→ verify（并行批次），两条触发通道同一套 runAutoTasks（均带 TUI 通知）；
+`session_shutdown` 只尾部落盘（纯 IO，不 spawn）。
 
 **水位判定**（`decideAutoTrigger`）：会话累计 token 与基线之差达到 `autoWatermarkTokens`
 触发一次。三个防循环规则：
@@ -112,17 +114,17 @@ Windows 必弹新控制台）；超时兜底与结果判定依赖主进程存活
 软约束；主进程存活期另有 10 分钟超时强杀进程树兑底（`killWorkerTree`）；worker 成败由调用方用库快照 diff 判定，不读子进程输出。
 
 **verify 并行批次**：待办实体（含 failed 修正流）按 `splitPending` 切块（块数 ≤ 并发上限 8），每块一个子进程
-并发跑；批次前后统一快照 diff，汇总一条通知（`Worker×N` + 结果/失败明细）。
+并发跑；批次前后统一快照 diff，汇总一条通知（`verify×N` + 结果/失败明细）。
 
 **结果通知**：worker 前后各拍一次库快照（实体 id→mtime + 验证记录文件名→target/result），
-diff 后一行通知：record 报 `+ 新增 / ~ 更新`，verify 报 `+ 验证：<id> ✅/⚠️`。
+diff 后汇总通知（英文文案）：record 报 `+ <id> / ~ <id>`，verify 报 `+ verified: <id> ✅/⚠️`。
+事件 ctx 在会话替换后失效，通知走带 stale 兑底的闭包（`guardNotify`），降级 console。
 
-**会话边界冲刷（session_shutdown）**：水位窗口之外的会话尾部增量在会话离开时补固化。
-`new` / `resume`（会话切换，主进程存活）：节流（`autoFlushMinTokens`，距上次固化增量不足
-跳过）通过则 spawn record worker 立即固化——只 record 不 verify（verify 只在水位触发跑），
-无通知；`quit` / `reload` / `fork`：不依赖子进程可靠性，尾部全量 transcript 落盘
-`.memory/pending.md`（纯 IO 覆盖写），下次任一 record（水位触发或冲刷）合并素材并消费
-（record 成功后删除）。
+**会话边界落盘（session_shutdown）+ 启动冲刷（session_start）**：水位窗口之外的会话尾部增量
+在会话离开时全量 transcript 落盘 `.memory/pending.md`（全 reason 统一，纯 IO 覆盖写，
+不 spawn worker——主进程存活与 worker 执行都不可靠，Windows 控制台连坐）。
+下次 session_start 发现尾部素材立即跑 record + verify（新 ctx，带通知）；启动固化失败则
+pending 保留，退回下次水位触发合并素材兑底。
 
 ## 设计决策
 

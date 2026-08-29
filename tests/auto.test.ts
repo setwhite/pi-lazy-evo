@@ -1,12 +1,12 @@
 /**
- * auto 自动挡单元测试：只测纯函数（触发判定 / 冲刷节流与尾部落盘 / 任务参数组装 / 库快照 diff），
+ * auto 自动挡单元测试：只测纯函数（触发判定 / 尾部落盘 / 任务参数组装 / 库快照 diff），
  * 不真正 spawn pi 子进程。素材抽取与提示词组装见 prompts.test.ts。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, INITIAL_AUTO_STATE, shouldFlushOnShutdown, splitPending, writePendingTail } from "../extension/auto.ts";
+import { buildAutoWorkerArgs, clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, hasPendingTail, INITIAL_AUTO_STATE, splitPending, writePendingTail } from "../extension/auto.ts";
 import { diffLibrary, formatChanges, snapshotLibrary } from "../extension/library.ts";
 import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
 
@@ -55,39 +55,6 @@ describe("decideAutoTrigger", () => {
 		expect(trigger).toBe(false);
 		expect(state.baselineTokens).toBe(80_000);
 	});
-
-	it("触发推进 lastRunTokens（冲刷节流的“刚固化过”标记）", () => {
-		const after = decideAutoTrigger(INITIAL_AUTO_STATE, 10_000, 50_000).state;
-		expect(after.lastRunTokens).toBeNull();
-		const { trigger, state } = decideAutoTrigger(after, 70_000, 50_000);
-		expect(trigger).toBe(true);
-		expect(state.lastRunTokens).toBe(70_000);
-	});
-
-	it("未触发不推进 lastRunTokens", () => {
-		const after = decideAutoTrigger(INITIAL_AUTO_STATE, 10_000, 50_000).state;
-		const { state } = decideAutoTrigger(after, 20_000, 50_000);
-		expect(state.lastRunTokens).toBeNull();
-	});
-});
-
-describe("shouldFlushOnShutdown", () => {
-	it("从未跑过：保守冲刷", () => {
-		expect(shouldFlushOnShutdown(null, 5_000, 8_000)).toBe(true);
-	});
-
-	it("token 不可知：保守冲刷", () => {
-		expect(shouldFlushOnShutdown(12_000, null, 8_000)).toBe(true);
-	});
-
-	it("距上次跑增量达阈值：冲刷", () => {
-		expect(shouldFlushOnShutdown(10_000, 20_000, 8_000)).toBe(true);
-	});
-
-	it("增量不足（含 compact 回落）跳过", () => {
-		expect(shouldFlushOnShutdown(10_000, 13_000, 8_000)).toBe(false);
-		expect(shouldFlushOnShutdown(20_000, 5_000, 8_000)).toBe(false);
-	});
 });
 
 describe("会话边界尾部落盘", () => {
@@ -107,6 +74,16 @@ describe("会话边界尾部落盘", () => {
 
 	it("无落盘时素材原样", () => {
 		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
+	});
+
+	it("hasPendingTail：无文件/空文件为假，落盘后为真，消费后回假", () => {
+		expect(hasPendingTail(cwd)).toBe(false);
+		writePendingTail(cwd, "   ");
+		expect(hasPendingTail(cwd)).toBe(false); // 纯空白视为无
+		writePendingTail(cwd, "tail");
+		expect(hasPendingTail(cwd)).toBe(true);
+		clearPendingTail(cwd);
+		expect(hasPendingTail(cwd)).toBe(false);
 	});
 
 	it("record 成功后清理：清理后不再并入", () => {
@@ -179,9 +156,9 @@ describe("库快照 diff", () => {
 
 describe("formatChanges", () => {
 	it("record 文案：新增/更新拼接；无变化", () => {
-		expect(formatChanges("record", { addedEntities: ["a", "b"], updatedEntities: ["c"], newVerifications: [] })).toBe("+ a, b　~ c");
+		expect(formatChanges("record", { addedEntities: ["a", "b"], updatedEntities: ["c"], newVerifications: [] })).toBe("+ a, b | ~ c");
 		expect(formatChanges("record", { addedEntities: [], updatedEntities: ["c"], newVerifications: [] })).toBe("~ c");
-		expect(formatChanges("record", { addedEntities: [], updatedEntities: [], newVerifications: [] })).toBe("无变化");
+		expect(formatChanges("record", { addedEntities: [], updatedEntities: [], newVerifications: [] })).toBe("no changes");
 	});
 
 	it("verify 文案：带 ✅/⚠️ 结果；无变化", () => {
@@ -193,8 +170,8 @@ describe("formatChanges", () => {
 				{ id: "b", result: "failed" as const },
 			],
 		};
-		expect(formatChanges("verify", changes)).toBe("+ 验证：a ✅, b ⚠️");
-		expect(formatChanges("verify", { addedEntities: [], updatedEntities: [], newVerifications: [] })).toBe("无变化");
+		expect(formatChanges("verify", changes)).toBe("+ verified: a ✅, b ⚠️");
+		expect(formatChanges("verify", { addedEntities: [], updatedEntities: [], newVerifications: [] })).toBe("no changes");
 	});
 });
 

@@ -45,18 +45,18 @@ export function diffLibrary(before: LibrarySnapshot, after: LibrarySnapshot): Li
 	return { addedEntities, updatedEntities, newVerifications };
 }
 
-/** 通知文案策略表：kind → 格式化函数（无变化统一返回"无变化"） */
+/** 通知文案策略表：kind → 格式化函数（无变化统一返回"no changes"） */
 const FORMATTERS: Record<WorkerKind, (changes: LibraryChanges) => string> = {
 	record: (c) => {
 		const parts: string[] = [];
 		if (c.addedEntities.length) parts.push(`+ ${c.addedEntities.join(", ")}`);
 		if (c.updatedEntities.length) parts.push(`~ ${c.updatedEntities.join(", ")}`);
-		return parts.length ? parts.join("　") : "无变化";
+		return parts.length ? parts.join(" | ") : "no changes";
 	},
 	verify: (c) => {
-		if (!c.newVerifications.length) return "无变化";
+		if (!c.newVerifications.length) return "no changes";
 		const list = c.newVerifications.map((v) => `${v.id} ${v.result === "passed" ? "✅" : "⚠️"}`).join(", ");
-		return `+ 验证：${list}`;
+		return `+ verified: ${list}`;
 	},
 };
 
