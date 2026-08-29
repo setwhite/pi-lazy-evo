@@ -14,7 +14,7 @@ jobs:
       id-token: write  # OIDC 认证（npm trusted publishing），换取短时发布凭证
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # 安装 bun（依赖管理、测试与类型检查均使用 bun）
       - uses: oven-sh/setup-bun@v2
@@ -22,7 +22,7 @@ jobs:
           bun-version: latest
 
       # 配置 npm registry
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
