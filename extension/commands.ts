@@ -31,7 +31,7 @@ interface SubcommandDef {
 /** 子命令表（单一数据源：路由 / 帮助 / 补全共用） */
 const SUBCOMMANDS: SubcommandDef[] = [
 	{ name: "overview", hint: "", description: "library overview & verification queue", handler: overview },
-	{ name: "record", hint: "[note]", description: "record durable conclusions into .memory", handler: record },
+	{ name: "record", hint: "[note]", description: "record durable conclusions into the memory library", handler: record },
 	{ name: "query", hint: "[terms]", description: "search memory", handler: query },
 	{
 		name: "verify",

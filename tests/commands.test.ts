@@ -254,7 +254,7 @@ describe("/memory mode", () => {
 describe("动作与提示词", () => {
 	it("主会话注入经 runtime 派发协议手册指引", () => {
 		const s = createSession();
-		s.runtime.dispatch(buildAgentPrompt(recordTask(), s.runtime.protocolDir));
+		s.runtime.dispatch(buildAgentPrompt(recordTask(), s.runtime.protocolDir, s.runtime.cwd));
 		expect(s.sent.at(-1)!).toContain(s.runtime.protocolDir);
 	});
 

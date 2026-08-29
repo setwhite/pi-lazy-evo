@@ -69,7 +69,7 @@ export function queryTask(terms: string, index: QueryIndexEntry[]): AgentTask {
 		formats: [],
 		manuals: [],
 		instructions:
-			"用你自己的工具（grep / rg / read，不区分大小写）在 .memory/entities 中检索下方检索词。" +
+			"用你自己的工具（grep / rg / read，不区分大小写）在库根的 entities/ 中检索下方检索词。" +
 			"每个相关命中报告：实体 id、kind、门控状态（查下方索引，不要重算）与相关断言。" +
 			"若无相关命中，明确说明没有记录。",
 		material: `检索词：${terms || "未给出——从最近对话推断检索意图。"}\n记忆库索引（门控状态由扩展预计算）：\n${entries}`,
@@ -108,28 +108,32 @@ function refLine(protocolDir: string, task: AgentTask): string {
 	return [...task.formats, ...task.manuals].map((f) => join(protocolDir, f)).join(", ");
 }
 
+/**
+ * 库根定义行：手册一律用"库根"指代记忆库根目录（不写字面路径），
+ * 绝对路径只由两条通道的提示词给出——$MEMORY_DIR 覆盖时不会把手册与真路径劈成两套。
+ */
+function rootLine(cwd: string | undefined): string {
+	return `库根（记忆库根目录）= ${memoryDir(cwd)}。手册里的"库根"即指该目录，文件操作一律用此绝对路径。`;
+}
+
 /** 主会话注入消息（/memory 命令用）：已读手册不重复读 */
-export function buildAgentPrompt(task: AgentTask, protocolDir: string): string {
+export function buildAgentPrompt(task: AgentTask, protocolDir: string, cwd: string | undefined): string {
 	const refs = refLine(protocolDir, task);
 	const head = refs ? `若本会话尚未读过 ${refs}，先读；已读则直接执行。` : "";
-	const parts = [`[pi-lazy-evo] 记忆库操作请求。${head}${task.instructions}`];
+	const parts = [`[pi-lazy-evo] 记忆库操作请求。${head}${task.instructions}`, rootLine(cwd)];
 	if (task.material) parts.push(task.material);
 	return parts.join("\n");
 }
 
 /** 主会话注入通道：任务 → 提示词 → dispatch 唤醒主会话代理（手动 /memory 命令用） */
 export function injectTask(runtime: Runtime, task: AgentTask): void {
-	runtime.dispatch(buildAgentPrompt(task, runtime.protocolDir));
+	runtime.dispatch(buildAgentPrompt(task, runtime.protocolDir, runtime.cwd));
 }
 
-/** 子进程提示（auto 挡 worker 用）：独立上下文，自含角色/记忆库根/轮数约束 */
+/** 子进程提示（auto 挡 worker 用）：独立上下文，自含角色/库根/轮数约束 */
 export function buildWorkerPrompt(task: AgentTask, protocolDir: string, cwd: string, maxTurns: number): string {
-	const parts = [
-		`你是 pi-lazy-evo 记忆库代理。记忆库位于 ${memoryDir(cwd)}（用绝对路径操作）。`,
-		`- 先读手册：${refLine(protocolDir, task)}。`,
-		`- 任务：${task.instructions}`,
-	];
+	const parts = [`你是 pi-lazy-evo 记忆库代理。${rootLine(cwd)}`, `- 先读手册：${refLine(protocolDir, task)}。`, `- 任务：${task.instructions}`];
 	if (task.material) parts.push(`- 素材：\n${task.material}`);
-	parts.push(`- 约束：最多 ${maxTurns} 轮精简回复；不得触碰 .memory/ 以外的任何内容；结束时用一句话总结。`);
+	parts.push(`- 约束：最多 ${maxTurns} 轮精简回复；不得触碰库根以外的任何内容；结束时用一句话总结。`);
 	return parts.join("\n");
 }

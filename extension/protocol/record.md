@@ -1,6 +1,6 @@
 # 记忆库协议 — 记录（Record）
 
-由 `/memory record` 或 auto 任务触发。向 `.memory/` 写任何内容前，先读本手册与 entities.md。
+由 `/memory record` 或 auto 任务触发。向库根写任何内容前，先读本手册与 entities.md（库根定义见 entities.md）。
 
 ## 原则
 

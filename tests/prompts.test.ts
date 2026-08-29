@@ -82,9 +82,30 @@ describe("任务与提示词", () => {
 	});
 
 	it("主会话提示词：精简无约束，含手册与素材", () => {
-		const prompt = buildAgentPrompt(verifyTask([{ id: "x", kind: "concept", state: "none" }]), "/p/protocol");
+		const prompt = buildAgentPrompt(verifyTask([{ id: "x", kind: "concept", state: "none" }]), "/p/protocol", "/w");
 		expect(prompt).toContain(join("/p/protocol", "verify.md"));
 		expect(prompt).toContain("- x [concept] ❓ 未验证");
 		expect(prompt).not.toContain("at most");
+	});
+
+	it("两条通道都给库根绝对路径（手册只写“库根”，具体路径由提示词供给）", () => {
+		const task = recordTask();
+		expect(buildAgentPrompt(task, "/p/protocol", "/w")).toContain(memoryDir("/w"));
+		expect(buildWorkerPrompt(task, "/p/protocol", "/w", 8)).toContain(memoryDir("/w"));
+	});
+
+	it("MEMORY_DIR 覆盖时主会话提示词同样指向覆盖路径", () => {
+		process.env.MEMORY_DIR = "/custom/memory";
+		try {
+			const prompt = buildAgentPrompt(recordTask(), "/p/protocol", "/w");
+			expect(prompt).toContain("/custom/memory");
+			expect(prompt).not.toContain("/w/.memory");
+		} finally {
+			delete process.env.MEMORY_DIR;
+		}
+	});
+
+	it("库根未注入时回到进程目录（补全等早触发路径的防御）", () => {
+		expect(buildAgentPrompt(recordTask(), "/p/protocol", undefined)).toContain(memoryDir(undefined));
 	});
 });

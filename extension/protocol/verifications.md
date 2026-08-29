@@ -1,6 +1,6 @@
 # 记忆库协议 — 验证记录
 
-验证记录位于 `.memory/verifications/`，追加前请把本手册与操作手册一起读完。实体格式见 entities.md。
+验证记录位于 `<库根>/verifications/`，追加前请把本手册与操作手册一起读完。实体格式见 entities.md。
 
 ## 格式
 

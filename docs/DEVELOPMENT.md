@@ -44,6 +44,9 @@ bun run typecheck   # tsc strict，零错误
 改手册即改行为；改格式时同步 `docs/USER.md`（用户视角）与 `docs/ARCHITECTURE.md`（设计动机）。
 测试不覆盖协议文本，靠 store 读取的严格性测试兜底（非法一律忽略）。
 
+手册不写记忆库的具体路径（一律称“库根”，定义见 entities.md）：绝对路径只由两条通道的提示词
+给出（`prompts.ts` 的 `rootLine`）——$MEMORY_DIR 覆盖时手册与真路径不会分家。
+
 ## 测试结构
 
 | 文件 | 覆盖 |
