@@ -13,11 +13,13 @@ bun run typecheck   # tsc strict，零错误
 
 ## 目录职责
 
-依赖方向 `index → {commands, auto} → {prompts, gate, store} → utils`：
+依赖方向 `index → {commands, auto} → {prompts, gate, store, deps} → utils`：
 
 - `utils.ts` 只放确定性小工具（frontmatter / 校验 / 文本提取 / 通知，无 IO 无业务）
-- `store.ts` 存储域整体（布局 / 实体 / 验证记录 / 全库配对），读取层"尽力解析 + 非法忽略"
-- `gate.ts` 门控域纯函数（单实体四态判定 / 批量门控 / 待验筛选 / 全库摘要）
+- `store.ts` 存储域整体（布局 / 实体 / 验证记录子目录 / 全库配对），读取层"尽力解析 + 非法忽略"
+- `gate.ts` 门控域纯函数（四态推导 / 依赖失效覆盖 / 待验筛选 / 全库摘要，无 IO）
+- `deps.ts` 统一读库入口 `gatedLibrary(cwd)`（读库 → 门控 → depends-on 失效叠加，无任何落盘）
+- `library.ts` 库快照与 diff（auto 挡通知，自 auto.ts 拆出）
 - `prompts.ts` 任务纯数据（AgentTask）+ 组装注入；手动命令与 auto worker 共用同一任务语义
 - `commands.ts` 只做"解析输入 → 调 gate/prompts → 通知"，业务聚合在 gate
 - `auto.ts` 水位判定 + 串行编排 + spawn 子进程 + 库快照 diff
@@ -38,7 +40,7 @@ bun run typecheck   # tsc strict，零错误
 3. 在 `tests/commands.test.ts` 加用例；`docs/USER.md` 补用法
 
 需"读库→门控→注入"的命令参照 verify：
-`readLibrary → gateLibrary → selectPending → verifyTask + injectTask → notify`。
+`gatedLibrary → selectPending → verifyTask + injectTask → notify`（不要绕过 gatedLibrary 自行拼装）。
 
 ## 协议手册
 
@@ -57,7 +59,8 @@ bun run typecheck   # tsc strict，零错误
 | 文件 | 覆盖 |
 |---|---|
 | store.test.ts | 存储域：实体/验证记录读写、严格性、整库配对 |
-| gate.test.ts | 门控聚合纯函数（含 3s 容差） |
+| gate.test.ts | 门控聚合纯函数（含 3s 容差、四态推导、筛选与摘要） |
+| deps.test.ts | 依赖失效纯推导（passed 后依赖变化降级、复验自愈、缺失/无依赖不受影响） |
 | config.test.ts | settings.json 读写（pi-lazy-evo 命名空间） |
 | commands.test.ts | 命令注册、路由、两级补全、注入（独立会话工厂） |
 | prompts.test.ts | 素材抽取、任务纯数据、主会话/worker 提示词组装 |
@@ -68,7 +71,7 @@ bun run typecheck   # tsc strict，零错误
 ```bash
 # 1) package.json 升版本（npm 不允许覆盖已发布版本，升级后再打 tag）
 # 2) 打 v* tag 触发 .github/workflows/npm-publish.yml
-git tag v0.1.8 && git push origin v0.1.8
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
 发布经 npm trusted publishing（OIDC）认证，无需 API token。两个精确匹配约束：
