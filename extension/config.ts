@@ -37,6 +37,8 @@ export interface MemorySettings {
 	autoWatermarkTokens: number;
 	/** 后台 worker 最大轮数（成本上限） */
 	autoMaxTurns: number;
+	/** 会话边界冲刷节流：距上次固化的增量低于此 token 数跳过（0 = 有素材即冲刷） */
+	autoFlushMinTokens: number;
 	/** 便宜模型（缺省用主会话模型） */
 	autoModel?: AutoModel;
 	/** record worker 工具白名单 */
@@ -45,11 +47,12 @@ export interface MemorySettings {
 	autoVerifyTools: string[];
 }
 
-/** 默认配置：手动挡；触发器 32k token；worker 上限 16 轮 */
+/** 默认配置：手动挡；触发器 32k token；worker 上限 16 轮；冲刷节流 8k */
 const DEFAULTS: MemorySettings = {
 	mode: "manual",
 	autoWatermarkTokens: 32_000,
 	autoMaxTurns: 16,
+	autoFlushMinTokens: 8_000,
 	autoMemoTools: [...DEFAULT_MEMO_TOOLS],
 	autoVerifyTools: [...DEFAULT_VERIFY_TOOLS],
 };
@@ -57,6 +60,11 @@ const DEFAULTS: MemorySettings = {
 /** 解析正整数：非有限正整数返回 undefined（非法忽略） */
 function positiveInt(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/** 解析非负整数：0 合法（语义为“有素材即冲刷”），负数/非整数返回 undefined */
+function nonNegativeInt(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 /** 解析 autoModel：provider+id 非空才接受，thinking 可选 */
@@ -88,6 +96,7 @@ const FIELD_PARSERS: Record<keyof MemorySettings, (value: unknown) => unknown> =
 	mode: (v) => (v === "manual" || v === "auto" ? v : undefined),
 	autoWatermarkTokens: positiveInt,
 	autoMaxTurns: positiveInt,
+	autoFlushMinTokens: nonNegativeInt,
 	autoModel: parseAutoModel,
 	autoMemoTools: parseTools,
 	autoVerifyTools: parseTools,

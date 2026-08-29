@@ -1,19 +1,20 @@
 /**
- * auto 自动挡：turn_end 水位判定派发后台任务（record 串行 + verify 批次）。
+ * auto 自动挡：turn_end 水位判定派发后台任务（record 串行 + verify 批次）；
+ * session_shutdown 会话边界冲刷（new/resume 立即固化；quit/reload/fork 尾部落盘待下次合并）。
  * 任务语义与手动命令同一套（prompts.ts），通道不同：手动走主会话注入，自动走子进程。
  * 无管道通道：stdio 全 ignore + non-detached——子进程继承父控制台，Windows 上不弹新窗口；
  * detached 在 Windows 必弹新控制台（CREATE_NEW_CONSOLE，与 windowsHide 互斥），故不可用。
  * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线。
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildWorkerPrompt, extractTranscript, recordTask, verifyTask, type AgentTask } from "./prompts.ts";
 import { loadConfig, type AutoModel, type MemorySettings } from "./config.ts";
 import { gateLibrary, selectPending, toPending, type PendingEntity } from "./gate.ts";
-import { ensureMemoryDir, listEntities, listVerifications, readLibrary } from "./store.ts";
+import { ensureMemoryDir, listEntities, listVerifications, memoryDir, readLibrary } from "./store.ts";
 import { notify } from "./utils.ts";
 import type { Runtime } from "./index.ts";
 
@@ -27,10 +28,12 @@ export interface AutoState {
 	initialized: boolean;
 	/** 是否有 worker 在跑 */
 	inFlight: boolean;
+	/** 上次实际跑 worker 时的上下文 token（null = 从未跑过；冲刷节流的“刚固化过”标记） */
+	lastRunTokens: number | null;
 }
 
 /** 初始状态 */
-export const INITIAL_AUTO_STATE: AutoState = { baselineTokens: 0, initialized: false, inFlight: false };
+export const INITIAL_AUTO_STATE: AutoState = { baselineTokens: 0, initialized: false, inFlight: false, lastRunTokens: null };
 
 /**
  * 纯判定：给定状态与当前累计 token，水位增量是否足以触发一次自动任务。
@@ -42,7 +45,16 @@ export function decideAutoTrigger(state: AutoState, tokens: number, watermarkTok
 	if (tokens < state.baselineTokens) return { trigger: false, state: { ...state, baselineTokens: tokens } };
 	if (tokens - state.baselineTokens < watermarkTokens) return { trigger: false, state };
 	if (state.inFlight) return { trigger: false, state: { ...state, baselineTokens: tokens } };
-	return { trigger: true, state: { ...state, baselineTokens: tokens } };
+	return { trigger: true, state: { ...state, baselineTokens: tokens, lastRunTokens: tokens } };
+}
+
+/**
+ * 会话边界冲刷节流判定：上次固化点未知 / token 不可知 → 保守冲刷；
+ * 距上次固化的增量不足（含 compact 回落为负）→ 素材刚固化或太少，跳过。
+ */
+export function shouldFlushOnShutdown(lastRunTokens: number | null, currentTokens: number | null, minTokens: number): boolean {
+	if (lastRunTokens === null || currentTokens === null) return true;
+	return currentTokens - lastRunTokens >= minTokens;
 }
 
 /** 挂载 auto 钩子：turn_end 水位触发 */
@@ -63,6 +75,28 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 				state = { ...state, inFlight: false };
 			});
 	});
+	pi.on("session_shutdown", (event, ctx) => {
+		const config = loadConfig(ctx.cwd);
+		if (config.mode !== "auto") return;
+		if (state.inFlight) return; // worker 正在固化同一份素材，跳过无损
+		const transcript = extractTranscript(ctx.sessionManager.getEntries());
+		if (!transcript.trim()) return;
+		// new / resume：主进程存活，节流通过则 spawn 立即固化（只 record，不连带 verify）
+		if (event.reason === "new" || event.reason === "resume") {
+			const tokens = ctx.getContextUsage()?.tokens ?? null;
+			if (!shouldFlushOnShutdown(state.lastRunTokens, tokens, config.autoFlushMinTokens)) return;
+			state = { ...state, inFlight: true, lastRunTokens: tokens ?? state.lastRunTokens ?? 0 };
+			void runAutoTasks({ runtime, ctx, config, transcript, withVerify: false })
+				.catch((error) => console.error("[pi-lazy-evo] 会话边界冲刷异常：", error))
+				.finally(() => {
+					state = { ...state, inFlight: false };
+				});
+			return;
+		}
+		// quit / reload / fork：主进程存活与 worker 执行都不可靠（Windows 控制台连坐），
+		// 尾部全量落盘（纯 IO），下次任一 record（水位触发或冲刷）合并素材并消费
+		writePendingTail(ctx.cwd, transcript);
+	});
 }
 
 /** 自动任务输入：执行环境 + 会话素材 */
@@ -71,15 +105,50 @@ interface AutoTaskInput {
 	ctx: ExtensionContext;
 	config: MemorySettings;
 	transcript: string;
+	/** 是否连带 verify：水位触发 true；会话边界冲刷 false（verify 只在水位触发跑） */
+	withVerify?: boolean;
+}
+
+// ---- 会话边界尾部落盘 ----
+
+/** 未固化尾部暂存文件名（记忆库根目录下） */
+const PENDING_TAIL_FILE = "pending.md";
+
+/** 覆盖写会话尾部素材（quit/reload/fork 时调用；纯 IO，不依赖 worker 进程存活） */
+export function writePendingTail(cwd: string, transcript: string): void {
+	const path = join(memoryDir(cwd), PENDING_TAIL_FILE);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, transcript, "utf8");
+}
+
+/** 合并未固化尾部到 record 素材（有则拼接；无则原样） */
+export function collectTranscriptWithPending(cwd: string, transcript: string): string {
+	let tail: string;
+	try {
+		tail = readFileSync(join(memoryDir(cwd), PENDING_TAIL_FILE), "utf8");
+	} catch {
+		return transcript;
+	}
+	return transcript ? `${transcript}\n\n[上一会话未固化尾部]\n${tail}` : tail;
+}
+
+/** 消费未固化尾部：record 成功后调用，失败（保留）时不调用 */
+export function clearPendingTail(cwd: string): void {
+	rmSync(join(memoryDir(cwd), PENDING_TAIL_FILE), { force: true });
 }
 
 /**
  * 一次自动任务：record（会话素材）→ verify（待验批次），两段分开快照 diff，汇总一条通知。
+ * 冲刷（withVerify=false）只跑 record：会话边界的 verify 与当前会话无语境关联，留给水位触发。
  */
-async function runAutoTasks({ runtime, ctx, config, transcript }: AutoTaskInput): Promise<void> {
+async function runAutoTasks({ runtime, ctx, config, transcript, withVerify = true }: AutoTaskInput): Promise<void> {
 	ensureMemoryDir(ctx.cwd);
 	const before = snapshotLibrary(ctx.cwd);
-	await runWorker("record", recordTask(transcript), runtime.protocolDir, ctx, config, config.autoMemoTools);
+	// 素材 = 当前会话 + 上次会话边界的未固化尾部（若有，顺带消费）
+	await runWorker("record", recordTask(collectTranscriptWithPending(ctx.cwd, transcript)), runtime.protocolDir, ctx, config, config.autoMemoTools);
+	// record 成功后消费 pending；失败（抛错）自然保留，下次再试
+	clearPendingTail(ctx.cwd);
+	if (!withVerify) return;
 	const mid = snapshotLibrary(ctx.cwd);
 	const chunks = splitPending(toPending(selectPending(gateLibrary(readLibrary(ctx.cwd)))));
 	const results = await Promise.allSettled(chunks.map((chunk) => runWorker("verify", verifyTask(chunk), runtime.protocolDir, ctx, config, config.autoVerifyTools)));
