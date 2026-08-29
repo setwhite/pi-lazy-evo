@@ -5,8 +5,9 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, setMode, type MemoryMode } from "./config.ts";
-import { gateLibrary, selectPending, summarizeLibrary, toPending } from "./gate.ts";
-import { ensureMemoryDir, listEntities, readLibrary } from "./store.ts";
+import { selectPending, summarizeLibrary, toPending } from "./gate.ts";
+import { ensureMemoryDir, listEntities } from "./store.ts";
+import { gatedLibrary } from "./deps.ts";
 import { injectTask, queryTask, recordTask, verifyTask, type QueryIndexEntry } from "./prompts.ts";
 import { notify } from "./utils.ts";
 import type { Runtime } from "./index.ts";
@@ -87,22 +88,26 @@ export function registerMemoryCommands(pi: ExtensionAPI, runtime: Runtime): void
 	});
 }
 
-/** /memory overview：挡位 + 四态分布 + 待验清单（只展示，不注入） */
+/** /memory overview：挡位 + 四态分布 + 待修正/待验清单（只展示，不注入） */
 async function overview(_args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
 	const config = loadConfig(ctx.cwd);
 	const mode = config.mode;
-	const gated = gateLibrary(readLibrary(ctx.cwd));
+	const gated = gatedLibrary(ctx.cwd);
 	if (!gated.length) {
 		const lines = [`Mode: ${mode}`, "Memory library is empty."];
 		if (mode === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
 		notify(ctx, "Memory Overview", lines);
 		return;
 	}
-	const { counts, pending } = summarizeLibrary(gated);
+	const { counts, pending, fix } = summarizeLibrary(gated);
 	const lines = [
 		`Mode: ${mode}`,
 		`Entities ${gated.length} | passed ${counts.passed} / failed ${counts.failed} / unverified ${counts.none} / stale ${counts.stale}`,
 	];
+	if (fix.length) {
+		lines.push(`Needs fix (${fix.length}): ${fix.map(({ id }) => id).join(", ")}`);
+		lines.push("Run /memory verify — failed entities go through fix-then-reverify.");
+	}
 	if (pending.length) {
 		lines.push(`Needs verification (${pending.length}): ${pending.map(({ id, state }) => `${id} (${state === "none" ? "unverified" : "stale"})`).join(", ")}`);
 		lines.push("Run /memory verify for a batch check.");
@@ -119,7 +124,7 @@ async function record(args: string, ctx: ExtensionCommandContext, runtime: Runti
 
 /** /memory query [terms]：注入检索任务（附预计算门控索引） */
 async function query(args: string, ctx: ExtensionCommandContext, runtime: Runtime): Promise<void> {
-	const gated = gateLibrary(readLibrary(ctx.cwd));
+	const gated = gatedLibrary(ctx.cwd);
 	if (!gated.length) {
 		notify(ctx, "Memory Query", ["Memory library is empty."]);
 		return;
@@ -129,10 +134,10 @@ async function query(args: string, ctx: ExtensionCommandContext, runtime: Runtim
 	notify(ctx, "Memory Query", ["Reminder injected — the agent will search memory now."]);
 }
 
-/** /memory verify [id]：算出待验清单并派发验证任务（验证动作本身交给代理执行） */
+/** /memory verify [id]：算出待验+待修正清单并派发验证任务（验证动作本身交给代理执行） */
 async function verify(args: string, ctx: ExtensionCommandContext, runtime: Runtime): Promise<void> {
 	const targetId = args.trim();
-	const all = gateLibrary(readLibrary(ctx.cwd));
+	const all = gatedLibrary(ctx.cwd);
 	if (!all.length) {
 		notify(ctx, "Memory Verify", ["Memory library is empty."]);
 		return;

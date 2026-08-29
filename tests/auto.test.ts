@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAutoWorkerArgs, clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, diffLibrary, formatChanges, INITIAL_AUTO_STATE, shouldFlushOnShutdown, snapshotLibrary, splitPending, writePendingTail } from "../extension/auto.ts";
+import { buildAutoWorkerArgs, clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, INITIAL_AUTO_STATE, shouldFlushOnShutdown, splitPending, writePendingTail } from "../extension/auto.ts";
+import { diffLibrary, formatChanges, snapshotLibrary } from "../extension/library.ts";
 import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
 
 /** 收集本次用例生成的临时 worker 目录，统一清理 */

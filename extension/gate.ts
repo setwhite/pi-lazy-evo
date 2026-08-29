@@ -1,6 +1,6 @@
 /**
  * 门控域：实体信任状态推导（纯计算，不 IO）。
- * 状态永远由"实体正文 mtime vs 最新验证记录时间"实时推出，不落盘、每次现算。
+ * 状态永远由"实体正文 mtime / 依赖文件 mtime vs 最新验证记录时间"实时推出，不落盘、每次现算。
  */
 import type { EntityMeta, EntityWithVerifications, VerificationRecord } from "./store.ts";
 
@@ -47,6 +47,9 @@ export function computeGate(meta: EntityMeta, verifications: VerificationRecord[
 /** 需要（重新）验证的门控状态：未证实 + 过期 */
 export const NEEDS_VERIFICATION: ReadonlySet<GateState> = new Set(["none", "stale"]);
 
+/** 需要修正的门控状态：验证失败——先修正正文再复验，禁止对未修正正文重复验证 */
+export const NEEDS_FIX: ReadonlySet<GateState> = new Set(["failed"]);
+
 /** 实体与门控结果配对（gateLibrary 返回项） */
 export interface GatedEntity {
 	meta: EntityWithVerifications["meta"];
@@ -58,9 +61,23 @@ export function gateLibrary(items: EntityWithVerifications[]): GatedEntity[] {
 	return items.map(({ meta, verifications }) => ({ meta, gate: computeGate(meta, verifications) }));
 }
 
-/** 待验实体选取：指定 id 时全量复验该实体（含 passed/failed）；未指定只挑 none/stale，保持原顺序 */
+/** 依赖失效覆盖：passed 实体但某 depends-on 文件在该次验证之后被修改（mtime 晚于 checked_at 超容差）→ stale。
+ * 纯推导无基线缓存：比较锚点是最新验证记录时刻，复验通过即自愈；依赖缺失（depMtime 返回 null）不置 stale。
+ * 非 passed 态（none/failed/stale）本就在待办队列，不重复处理。 */
+export function applyDepStaleness(gated: GatedEntity[], depMtime: (relPath: string) => number | null): void {
+	for (const g of gated) {
+		if (g.gate.state !== "passed" || !g.gate.latest) continue;
+		const after = g.gate.latest.checkedAtMs + GRACE_MS;
+		if (g.meta.dependsOn.some((rel) => {
+			const m = depMtime(rel);
+			return m !== null && m > after;
+		})) g.gate.state = "stale";
+	}
+}
+
+/** 待验实体选取：指定 id 时全量复验该实体（含 passed/failed）；未指定挑 none/stale（验证）+ failed（修正），保持原顺序 */
 export function selectPending(gated: GatedEntity[], targetId?: string): GatedEntity[] {
-	if (!targetId) return gated.filter((g) => NEEDS_VERIFICATION.has(g.gate.state));
+	if (!targetId) return gated.filter((g) => NEEDS_VERIFICATION.has(g.gate.state) || NEEDS_FIX.has(g.gate.state));
 	return gated.filter((g) => g.meta.id === targetId);
 }
 
@@ -76,19 +93,24 @@ export function toPending(gated: GatedEntity[]): PendingEntity[] {
 	return gated.map(({ meta, gate }) => ({ id: meta.id, kind: meta.kind, state: gate.state }));
 }
 
-/** 全库摘要：四态计数 + 待验清单（overview 展示用） */
+/** 全库摘要：四态计数 + 待验清单 + 待修正清单（overview 展示用） */
 export interface LibrarySummary {
 	counts: Record<GateState, number>;
+	/** 待验证：none / stale */
 	pending: { id: string; state: GateState }[];
+	/** 待修正：failed（先修正正文再复验，第一优先） */
+	fix: { id: string; state: GateState }[];
 }
 
-/** 全库统计摘要：四态计数与待验清单一次算齐 */
+/** 全库统计摘要：四态计数、待验与待修正清单一次算齐 */
 export function summarizeLibrary(gated: GatedEntity[]): LibrarySummary {
 	const counts = Object.fromEntries(GATE_STATES.map((s) => [s, 0])) as Record<GateState, number>;
 	const pending: { id: string; state: GateState }[] = [];
+	const fix: { id: string; state: GateState }[] = [];
 	for (const { meta, gate } of gated) {
 		counts[gate.state]++;
 		if (NEEDS_VERIFICATION.has(gate.state)) pending.push({ id: meta.id, state: gate.state });
+		if (NEEDS_FIX.has(gate.state)) fix.push({ id: meta.id, state: gate.state });
 	}
-	return { counts, pending };
+	return { counts, pending, fix };
 }

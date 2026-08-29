@@ -42,6 +42,24 @@ describe("任务与提示词", () => {
 		expect(task.material).toContain("- x [tool] ⏳ 已过期（需复验）");
 	});
 
+	it("验证任务：failed 实体进待修正段（FIX），其余进待验证段", () => {
+		const task = verifyTask([
+			{ id: "bad", kind: "concept", state: "failed" },
+			{ id: "new", kind: "tool", state: "none" },
+		]);
+		expect(task.material).toContain("待修正");
+		expect(task.material).toContain("- bad [concept] ⚠️ 验证失败");
+		expect(task.material).toContain("先读该实体最新一条 failed 记录的正文");
+		expect(task.material).toContain("- new [tool] ❓ 未验证");
+		expect(task.material!.indexOf("待修正")).toBeLessThan(task.material!.indexOf("待验证"));
+	});
+
+	it("验证任务：conflict 检查常态化（通读全库找矛盾断言）", () => {
+		const task = verifyTask([{ id: "x", kind: "tool", state: "stale" }]);
+		expect(task.instructions).toContain("矛盾");
+		expect(task.instructions).toContain("grep");
+	});
+
 	it("worker 提示词：含手册引用、素材与约束", () => {
 		const prompt = buildWorkerPrompt(recordTask("hello"), "/p/protocol", "/w", 8);
 		expect(prompt).toContain(join("/p/protocol", "entities.md"));

@@ -5,16 +5,19 @@
  * 无管道通道：stdio 全 ignore + non-detached——子进程继承父控制台，Windows 上不弹新窗口；
  * detached 在 Windows 必弹新控制台（CREATE_NEW_CONSOLE，与 windowsHide 互斥），故不可用。
  * 防循环：水位增量触发；worker 在跑时吸收增量；compaction 回落重设基线。
+ * 待验清单含 failed（修正流）：verify 批次里 failed 实体先修正文再复验，杜绝悬置。
  */
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildWorkerPrompt, extractTranscript, recordTask, verifyTask, type AgentTask } from "./prompts.ts";
 import { loadConfig, type AutoModel, type MemorySettings } from "./config.ts";
-import { gateLibrary, selectPending, toPending, type PendingEntity } from "./gate.ts";
-import { ensureMemoryDir, listEntities, listVerifications, memoryDir, readLibrary } from "./store.ts";
+import { selectPending, toPending, type PendingEntity } from "./gate.ts";
+import { diffLibrary, formatChanges, snapshotLibrary, type LibraryChanges, type WorkerKind } from "./library.ts";
+import { ensureMemoryDir, memoryDir } from "./store.ts";
+import { gatedLibrary } from "./deps.ts";
 import { notify } from "./utils.ts";
 import type { Runtime } from "./index.ts";
 
@@ -132,13 +135,13 @@ export function collectTranscriptWithPending(cwd: string, transcript: string): s
 	return transcript ? `${transcript}\n\n[上一会话未固化尾部]\n${tail}` : tail;
 }
 
-/** 消费未固化尾部：record 成功后调用，失败（保留）时不调用 */
+/** 消费未固化尾部：record 成功后调用，失败（抛错）自然保留，下次再试 */
 export function clearPendingTail(cwd: string): void {
 	rmSync(join(memoryDir(cwd), PENDING_TAIL_FILE), { force: true });
 }
 
 /**
- * 一次自动任务：record（会话素材）→ verify（待验批次），两段分开快照 diff，汇总一条通知。
+ * 一次自动任务：record（会话素材）→ verify（待验+待修正批次），两段分开快照 diff，汇总一条通知。
  * 冲刷（withVerify=false）只跑 record：会话边界的 verify 与当前会话无语境关联，留给水位触发。
  */
 async function runAutoTasks({ runtime, ctx, config, transcript, withVerify = true }: AutoTaskInput): Promise<void> {
@@ -150,7 +153,8 @@ async function runAutoTasks({ runtime, ctx, config, transcript, withVerify = tru
 	clearPendingTail(ctx.cwd);
 	if (!withVerify) return;
 	const mid = snapshotLibrary(ctx.cwd);
-	const chunks = splitPending(toPending(selectPending(gateLibrary(readLibrary(ctx.cwd)))));
+	const gated = gatedLibrary(ctx.cwd);
+	const chunks = splitPending(toPending(selectPending(gated)));
 	const results = await Promise.allSettled(chunks.map((chunk) => runWorker("verify", verifyTask(chunk), runtime.protocolDir, ctx, config, config.autoVerifyTools)));
 	const recordChanges = diffLibrary(before, mid);
 	const verifyChanges = diffLibrary(mid, snapshotLibrary(ctx.cwd));
@@ -165,67 +169,8 @@ async function runAutoTasks({ runtime, ctx, config, transcript, withVerify = tru
 
 // ---- worker 子进程通道 ----
 
-/** worker 任务类型：record 只写实体，verify 只追加验证记录 */
-export type WorkerKind = "record" | "verify";
-
 /** worker 默认超时（毫秒）：防子进程卡死 */
 const WORKER_TIMEOUT_MS = 10 * 60_000;
-
-/** 库快照：实体 id→mtime + 验证记录文件名→(target,result)，供 worker 前后 diff */
-export interface LibrarySnapshot {
-	entityMtimes: Map<string, number>;
-	verifications: Map<string, { target: string; result: "passed" | "failed" }>;
-}
-
-/** 变化摘要：实体新增/更新 + 新增验证记录 */
-export interface LibraryChanges {
-	addedEntities: string[];
-	updatedEntities: string[];
-	newVerifications: { id: string; result: "passed" | "failed" }[];
-}
-
-/** 快照当前库：实体 mtime + 验证记录文件（纯 IO，无副作用） */
-export function snapshotLibrary(cwd: string): LibrarySnapshot {
-	return {
-		entityMtimes: new Map(listEntities(cwd).map((m) => [m.id, m.mtimeMs])),
-		verifications: new Map(listVerifications(cwd).map((v) => [basename(v.path), { target: v.target, result: v.result }])),
-	};
-}
-
-/** 前后快照对比：实体新增/更新 + 新增验证记录（实体删除不报） */
-export function diffLibrary(before: LibrarySnapshot, after: LibrarySnapshot): LibraryChanges {
-	const addedEntities = [...after.entityMtimes.keys()].filter((id) => !before.entityMtimes.has(id));
-	const updatedEntities = [...after.entityMtimes.entries()]
-		.filter(([id, mtime]) => {
-			const prev = before.entityMtimes.get(id);
-			return prev !== undefined && prev !== mtime;
-		})
-		.map(([id]) => id);
-	const newVerifications = [...after.verifications.entries()]
-		.filter(([file]) => !before.verifications.has(file))
-		.map(([, v]) => ({ id: v.target.replace(/^entities\//, "").replace(/\.md$/, ""), result: v.result }));
-	return { addedEntities, updatedEntities, newVerifications };
-}
-
-/** 通知文案策略表：kind → 格式化函数（无变化统一返回"无变化"） */
-const FORMATTERS: Record<WorkerKind, (changes: LibraryChanges) => string> = {
-	record: (c) => {
-		const parts: string[] = [];
-		if (c.addedEntities.length) parts.push(`+ ${c.addedEntities.join(", ")}`);
-		if (c.updatedEntities.length) parts.push(`~ ${c.updatedEntities.join(", ")}`);
-		return parts.length ? parts.join("　") : "无变化";
-	},
-	verify: (c) => {
-		if (!c.newVerifications.length) return "无变化";
-		const list = c.newVerifications.map((v) => `${v.id} ${v.result === "passed" ? "✅" : "⚠️"}`).join(", ");
-		return `+ 验证：${list}`;
-	},
-};
-
-/** 变化清单 → 一行通知文本 */
-export function formatChanges(kind: WorkerKind, changes: LibraryChanges): string {
-	return FORMATTERS[kind](changes);
-}
 
 /** 组装子进程调用参数并落盘提示词文件（参数组装可测；spawn 由调用方执行） */
 export function buildAutoWorkerArgs(input: { model?: AutoModel; tools: string[]; promptContent: string }): { command: string; args: string[]; promptFile: string; promptDir: string } {

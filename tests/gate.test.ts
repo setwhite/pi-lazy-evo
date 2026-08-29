@@ -13,6 +13,7 @@ function meta(over: Partial<EntityMeta> = {}): EntityMeta {
 		path: "/tmp/.memory/entities/t.md",
 		kind: "tool",
 		sources: "unit test",
+		dependsOn: [],
 		mtimeMs: Date.now() - 3_600_000,
 		...over,
 	};
@@ -88,16 +89,17 @@ describe("NEEDS_VERIFICATION", () => {
 });
 
 describe("summarizeLibrary 全库摘要", () => {
-	it("四态计数与待验清单一次算齐", () => {
+	it("四态计数与待验/待修正清单一次算齐", () => {
 		const items: EntityWithVerifications[] = [
 			{ meta: meta({ id: "a", mtimeMs: Date.now() - 60_000 }), verifications: [rec({ target: "entities/a.md", checkedAtMs: Date.now() })] },
 			{ meta: meta({ id: "b", mtimeMs: Date.now() - 60_000 }), verifications: [rec({ target: "entities/b.md", result: "failed", checkedAtMs: Date.now() })] },
 			{ meta: meta({ id: "c", mtimeMs: Date.now() }), verifications: [] },
 			{ meta: meta({ id: "d", mtimeMs: Date.now() }), verifications: [rec({ target: "entities/d.md", checkedAtMs: Date.now() - 10_000 })] },
 		];
-		const { counts, pending } = summarizeLibrary(gateLibrary(items));
+		const { counts, pending, fix } = summarizeLibrary(gateLibrary(items));
 		expect(counts).toEqual({ passed: 1, failed: 1, none: 1, stale: 1 });
 		expect(pending.map((p) => p.id)).toEqual(["c", "d"]);
+		expect(fix.map((p) => p.id)).toEqual(["b"]);
 	});
 });
 
@@ -108,6 +110,14 @@ describe("selectPending 待验选取", () => {
 			{ meta: meta({ id: "b", mtimeMs: Date.now() }), verifications: [] },
 		];
 		expect(selectPending(gateLibrary(items)).map((g) => g.meta.id)).toEqual(["b"]);
+	});
+
+	it("未指定 id 时 failed 实体也进清单（修正流：先修正文再复验）", () => {
+		const items: EntityWithVerifications[] = [
+			{ meta: meta({ id: "a", mtimeMs: Date.now() - 60_000 }), verifications: [rec({ target: "entities/a.md", result: "failed", checkedAtMs: Date.now() })] },
+			{ meta: meta({ id: "b", mtimeMs: Date.now() }), verifications: [] },
+		];
+		expect(selectPending(gateLibrary(items)).map((g) => g.meta.id)).toEqual(["a", "b"]);
 	});
 
 	it("指定 id 时全量复验（含 passed），找不到返回空", () => {

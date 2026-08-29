@@ -181,7 +181,7 @@ describe("/memory verify", () => {
 		writeEntity(s.cwd, { id: "test-idea", kind: "concept", sources: "test", assertions: ["Idea."] });
 		await s.run("verify");
 		expect(s.sent.at(-1)!).toContain("test-idea");
-		expect(s.sent.at(-1)!).toContain("待验证实体");
+		expect(s.sent.at(-1)!).toContain("待验证");
 	});
 
 	it("已通过验证的实体不进入默认清单；指定 id 时则复验", async () => {

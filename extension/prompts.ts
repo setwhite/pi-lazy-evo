@@ -28,20 +28,38 @@ export function recordTask(transcript?: string): AgentTask {
 		formats: ["entities.md"],
 		manuals: ["record.md"],
 		instructions:
-			"按手册提炼长期结论：先检索 .memory/entities 中已有实体（判新增或更新），再新建实体或更新已有实体。不记录临时性细节。",
+			"按手册提炼长期结论：先检索 .memory/entities 中已有实体（判新增或更新），再新建实体或更新已有实体。不记录临时性细节。" +
+			"正文断言以 A1:、A2: 开头逐条编号（每句一条）；描述本仓库代码/配置行为的实体，在 front-matter 填 depends-on（仓库内相对路径，逗号分隔）。",
 		material: transcript ? `近期对话素材：\n${transcript}` : undefined,
 	};
 }
 
-/** 验证任务：核对清单实体（手动命令与 auto 挡都注入算好的清单，同一筛选） */
+/** 验证任务：核对清单实体（手动命令与 auto 挡都注入算好的清单，同一筛选）。
+ * failed 实体进"待修正"段：先按最新 failed 记录修正正文再复验（禁止对未修正正文重复验证）；
+ * conflict 检查常态化：开验前通读全库配对，矛盾断言写进验证记录证据。 */
 export function verifyTask(pending: PendingEntity[]): AgentTask {
+	const fix = pending.filter((e) => e.state === "failed");
+	const check = pending.filter((e) => e.state !== "failed");
+	const lines: string[] = [];
+	if (fix.length > 0) {
+		lines.push("待修正（先修正正文再复验）：");
+		lines.push(...fix.map((e) => `- ${e.id} [${e.kind}] ${GATE_LABEL[e.state]}`));
+		lines.push(
+			"修正步骤：先读该实体最新一条 failed 记录的正文（无效断言编号与推翻依据），按编号校正实体正文（走 record 更新流程，接受 stale 降级），随后照常验证并追加记录。",
+		);
+	}
+	if (check.length > 0) {
+		lines.push("待验证：");
+		lines.push(...check.map((e) => `- ${e.id} [${e.kind}] ${GATE_LABEL[e.state]}`));
+	}
 	return {
 		formats: ["entities.md", "verifications.md"],
 		manuals: ["verify.md"],
 		instructions:
-			"按手册逐一验证下方清单中的每个实体。追加验证记录（证据写在记录正文，只追加不覆盖）。" +
-			"只有实际核对过才追加 passed，否则追加 failed 并写明原因。",
-		material: `待验证实体：\n${pending.map((e) => `- ${e.id} [${e.kind}] ${GATE_LABEL[e.state]}`).join("\n")}`,
+			"按手册逐一处理下方清单中的每个实体。追加验证记录（证据写在记录正文，只追加不覆盖）。" +
+			"只有实际核对过才追加 passed，否则追加 failed 并写明原因（含无效断言编号）。" +
+			"开验前用 grep 通读 .memory/entities 全部实体；发现同事实互相矛盾的断言，把矛盾写进相关验证记录的证据。",
+		material: lines.join("\n"),
 	};
 }
 
