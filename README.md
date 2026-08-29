@@ -60,9 +60,11 @@ pi -e ./
 
 ## 文档
 
-- [docs/USER.md](docs/USER.md) 用户指南：命令用法，扩展配置
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 架构设计
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) 开发指南
+- [docs/USER.md](https://github.com/setwhite/pi-lazy-evo/blob/main/docs/USER.md) 用户指南：命令用法，扩展配置
+- [docs/ARCHITECTURE.md](https://github.com/setwhite/pi-lazy-evo/blob/main/docs/ARCHITECTURE.md) 架构设计
+- [docs/DEVELOPMENT.md](https://github.com/setwhite/pi-lazy-evo/blob/main/docs/DEVELOPMENT.md) 开发指南
+
+文档随包分发，安装后也可在 `node_modules/pi-lazy-evo/docs/` 本地查看。
 
 ## License
 
