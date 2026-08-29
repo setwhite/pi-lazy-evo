@@ -4,7 +4,7 @@
  * 整库配对、校验规则、损坏记录丢弃。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -78,15 +78,27 @@ describe("appendVerification / listVerifications", () => {
 		expect(records[0].evidence).toBe("e1");
 	});
 
-	it("同日多条自动序号 -2/-3，不覆盖旧记录", () => {
+	it("验证记录写入 <id>/ 子目录（按实体归位，同日多条自动序号）", () => {
 		appendVerification(cwd, { entityId: "t", validator: "v1", result: "passed", body: "e1" });
 		appendVerification(cwd, { entityId: "t", validator: "v2", result: "passed", body: "e2" });
 		appendVerification(cwd, { entityId: "t", validator: "v3", result: "passed", body: "e3" });
-		const files = readdirSync(join(mem, "verifications")).filter((f) => f.includes("t"));
-		expect(files.some((f) => f.endsWith(".md"))).toBe(true);
+		const files = readdirSync(join(mem, "verifications", "t")).sort();
+		expect(files).toHaveLength(3);
+		expect(files.some((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))).toBe(true);
 		expect(files.some((f) => f.endsWith("-2.md"))).toBe(true);
 		expect(files.some((f) => f.endsWith("-3.md"))).toBe(true);
-		expect(files).toHaveLength(3);
+		expect(listVerifications(cwd, "t")).toHaveLength(3);
+	});
+
+	it("仍兼容读取旧平铺结构记录（verifications/<日期>-<id>.md）", () => {
+		ensureMemoryDir(cwd);
+		writeFileSync(
+			join(mem, "verifications", "2026-08-29-t.md"),
+			`---\ntarget: entities/t.md\nvalidator: v\nchecked_at: 2026-08-29T10:00:00+08:00\nresult: passed\n---\nlegacy evidence\n`,
+		);
+		const records = listVerifications(cwd, "t");
+		expect(records).toHaveLength(1);
+		expect(records[0]!.evidence).toBe("legacy evidence");
 	});
 
 	it("按实体 id 过滤；不匹配的 target 不返回", () => {
@@ -167,6 +179,15 @@ describe("readLibrary", () => {
 	it("正文含 --- 分隔线不截断 body", () => {
 		writeEntity(cwd, { id: "doc-tool", kind: "tool", sources: "t", assertions: ["First line.", "---", "Second line."] });
 		expect(readEntity(cwd, "doc-tool")!.body).toBe("First line.\n---\nSecond line.");
+	});
+
+	it("front-matter 值带包裹引号仍能解析（checked_at 引号容错）", () => {
+		const dir = join(mem, "verifications", "quoted");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "2026-08-29.md"), '---\ntarget: entities/quoted.md\nvalidator: code\nchecked_at: "2026-08-29T10:00:00+08:00"\nresult: passed\n---\n\n证据\n');
+		const list = listVerifications(cwd, "quoted");
+		expect(list).toHaveLength(1);
+		expect(list[0].checkedAt).toBe("2026-08-29T10:00:00+08:00");
 	});
 });
 

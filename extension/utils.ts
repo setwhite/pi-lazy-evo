@@ -3,14 +3,15 @@
  * front-matter 解析 / 实体格式校验 / 消息文本提取 / TUI 通知。
  */
 
-/** 解析 front-matter 为字段映射；仅接受完整闭合（结尾 --- 独占一行），字段一律字符串 */
+/** 解析 front-matter 为字段映射；仅接受完整闭合（结尾 --- 独占一行），字段一律字符串。
+ * key 允许连字符（depends-on 等扩展字段）。 */
 export function parseFrontmatter(raw: string): Record<string, string> | null {
 	const open = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(raw);
 	if (!open) return null;
 	const fields: Record<string, string> = {};
 	for (const line of open[1].split(/\r?\n/)) {
-		const kv = /^([a-zA-Z_]+):\s*(.*)$/.exec(line.trim());
-		if (kv) fields[kv[1]] = kv[2];
+		const kv = /^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$/.exec(line.trim());
+		if (kv) fields[kv[1]] = kv[2].replace(/^(["'])(.*)\1$/, "$2"); // 去除值两侧成对包裹引号（手写/YAML 风格容错）
 	}
 	return fields;
 }

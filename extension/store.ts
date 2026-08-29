@@ -1,6 +1,8 @@
 /**
  * 存储域：记忆库布局 + 实体读写 + 验证记录（只追加）+ 全库配对。
  * 目录骨架由扩展预建；读取层"尽力解析 + 非法忽略"（损坏/非法的文件一律不入库）。
+ * 验证记录按实体归位于 verifications/<id>/ 子目录（旧平铺结构仍可读）；
+ * 门控不读记录文件名（只信 checked_at 与 mtime），目录结构只是防重名与可维护性。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -35,6 +37,8 @@ export interface EntityMeta {
 	kind: string;
 	/** 出处 */
 	sources: string;
+	/** 依赖的仓库内文件相对路径列表（depends-on front-matter，逗号分隔；空 = 不依赖） */
+	dependsOn: string[];
 	/** 文件修改时间戳（毫秒） */
 	mtimeMs: number;
 }
@@ -63,8 +67,8 @@ export function listEntities(cwd: string): EntityMeta[] {
 		});
 }
 
-/** 解析实体 front-matter 的 id/kind/sources；文件损坏返回 null */
-function parseEntityMeta(path: string): Pick<EntityMeta, "id" | "kind" | "sources"> | null {
+/** 解析实体 front-matter 的 id/kind/sources/depends-on；文件损坏返回 null */
+function parseEntityMeta(path: string): Pick<EntityMeta, "id" | "kind" | "sources" | "dependsOn"> | null {
 	let raw: string;
 	try {
 		raw = readFileSync(path, "utf8");
@@ -73,7 +77,11 @@ function parseEntityMeta(path: string): Pick<EntityMeta, "id" | "kind" | "source
 	}
 	const fm = parseFrontmatter(raw);
 	if (!fm) return null;
-	return { id: String(fm.id ?? ""), kind: String(fm.kind ?? ""), sources: String(fm.sources ?? "") };
+	const dependsOn = (fm["depends-on"] ?? "")
+		.split(",")
+		.map((p) => p.trim())
+		.filter(Boolean);
+	return { id: String(fm.id ?? ""), kind: String(fm.kind ?? ""), sources: String(fm.sources ?? ""), dependsOn };
 }
 
 /** 读取实体全文；不存在返回 null */
@@ -103,7 +111,7 @@ export function writeEntity(cwd: string, input: { id: string; kind: string; sour
 	const raw = `---\nid: ${input.id}\nkind: ${input.kind}\nsources: ${sources}\n---\n\n${input.assertions.join("\n")}\n`;
 	writeFileSync(path, raw);
 	const body = input.assertions.join("\n");
-	return { meta: { id: input.id, path, kind: input.kind, sources, mtimeMs: statSync(path).mtimeMs }, raw, body };
+	return { meta: { id: input.id, path, kind: input.kind, sources, dependsOn: [], mtimeMs: statSync(path).mtimeMs }, raw, body };
 }
 
 // ---- 验证记录 ----
@@ -123,15 +131,22 @@ export interface VerificationRecord {
 	checkedAtMs: number;
 }
 
-/** 列出验证记录；entityId 过滤时 target 必须精确匹配 entities/<id>.md */
+/** 列出验证记录；entityId 过滤时 target 必须精确匹配 entities/<id>.md。
+ * 支持一层子目录（按实体归位）：verifications/<id>/<日期>[-N].md，兼容旧平铺结构。 */
 export function listVerifications(cwd: string, entityId?: string): VerificationRecord[] {
 	const dir = join(memoryDir(cwd), "verifications");
 	if (!existsSync(dir)) return [];
 	const targetSuffix = entityId ? `entities/${entityId}.md` : null;
-	return readdirSync(dir)
-		.filter((f) => f.endsWith(".md"))
-		.sort()
-		.flatMap((f) => parseVerification(join(dir, f), targetSuffix) ?? []);
+	const files: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const p = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			for (const f of readdirSync(p)) if (f.endsWith(".md")) files.push(join(p, f));
+		} else if (entry.isFile() && entry.name.endsWith(".md")) {
+			files.push(p);
+		}
+	}
+	return files.sort().flatMap((p) => parseVerification(p, targetSuffix) ?? []);
 }
 
 /** 解析单条验证记录；target 不匹配 / result 非法 / 无法定时刻一律丢弃 */
@@ -153,15 +168,16 @@ function parseVerification(path: string, targetSuffix: string | null): Verificat
 	return { path, target, validator: String(fm.validator ?? ""), checkedAt, result: fm.result, evidence: stripFrontmatter(raw), checkedAtMs };
 }
 
-/** 追加验证记录（只追加；同日多条自动加序号后缀），返回记录文件路径 */
+/** 追加验证记录（只追加）：verifications/<id>/<日期>[-N].md，同日多条自动加序号，返回记录文件路径 */
 export function appendVerification(
 	cwd: string,
 	input: { entityId: string; validator: string; result: "passed" | "failed"; body: string; checkedAt?: string },
 ): string {
 	ensureMemoryDir(cwd);
-	const dir = join(memoryDir(cwd), "verifications");
+	const dir = join(memoryDir(cwd), "verifications", input.entityId);
+	mkdirSync(dir, { recursive: true });
 	const stamp = new Date().toISOString();
-	const base = `${stamp.slice(0, 10)}-${input.entityId}`;
+	const base = stamp.slice(0, 10);
 	let path = join(dir, base + ".md");
 	for (let i = 2; existsSync(path); i++) path = join(dir, `${base}-${i}.md`);
 	const raw = `---\ntarget: entities/${input.entityId}.md\nvalidator: ${input.validator}\nchecked_at: ${input.checkedAt ?? stamp}\nresult: ${input.result}\n---\n\n${input.body.trim()}\n`;
