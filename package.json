@@ -4,7 +4,11 @@
   "description": "pi agent 扩展：把会话信息沉淀为可验证的长期记忆（本地 md 存储 + 验证门控）",
   "keywords": ["pi-package"],
   "license": "MIT",
-  "files": ["extension/*.ts", "extension/protocol/"],
+  "files": ["extension/*.ts", "extension/protocol/", "docs/"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/setwhite/pi-lazy-evo.git"
+  },
   "scripts": {
     "test": "bun test tests",
     "typecheck": "bunx tsc -p tsconfig.json"
