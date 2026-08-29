@@ -9,3 +9,6 @@ node_modules/
 
 # 参考仓库克隆（web_fetch 工具产物），不入库
 .pi-github-repos/
+
+# 记忆库手工备份快照（迁移/清理前备份），不入库
+.memory.bak-*/
