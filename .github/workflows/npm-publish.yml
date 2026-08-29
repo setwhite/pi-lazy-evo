@@ -1,0 +1,36 @@
+# npm 发布工作流：手动触发或推送 v* tag 时发布到 npm registry
+name: npm publish
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # 安装 bun（依赖管理、测试与类型检查均使用 bun）
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # 配置 npm registry 认证（token 在仓库 Secrets 中配置为 NPM_TOKEN）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - run: bun run typecheck
+
+      # 版本号由 package.json 决定，发布前手动升级版本并打 v* tag
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
