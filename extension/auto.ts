@@ -44,6 +44,17 @@ export function hasPendingTail(cwd: string): boolean {
 }
 
 /**
+ * 纯判定：auto 挡钩子是否对本次运行生效。
+ * worker 子进程（`pi --mode json` / `-p`）同样加载本扩展并完整走完 session 生命周期，
+ * 且与宿主共用同一记忆库目录；若照常触发：session_start 见到 pending.md 会再 spawn 一个
+ * worker（无界递归），session_shutdown 会把 worker 自己的转录写进 pending.md（覆盖宿主素材）。
+ * 自动沉淀只属于长生命周期的交互会话，一次性无头模式一律不参与。
+ */
+export function autoHooksEnabled(mode: string): boolean {
+	return mode !== "json" && mode !== "print";
+}
+
+/**
  * 纯判定：给定状态与当前累计 token，水位增量是否足以触发一次自动任务。
  * 首次观察吸收基线不触发；compaction（tokens 回落）重设基线不触发；
  * 增量未达阈值不触发；worker 在跑时吸收增量（结束后不重复触发）。
@@ -85,6 +96,7 @@ function guardActivity(ctx: ExtensionContext): (lines: string[] | undefined) => 
 export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void {
 	let state: AutoState = { ...INITIAL_AUTO_STATE };
 	pi.on("session_start", (_event, ctx) => {
+		if (!autoHooksEnabled(ctx.mode)) return;
 		const activity = guardActivity(ctx);
 		activity(undefined); // 清掉上次会话可能残留的 worker 活动行
 		const config = loadConfig(ctx.cwd);
@@ -102,6 +114,7 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 			});
 	});
 	pi.on("turn_end", (_event, ctx) => {
+		if (!autoHooksEnabled(ctx.mode)) return;
 		const config = loadConfig(ctx.cwd);
 		if (config.mode !== "auto") return;
 		const usage = ctx.getContextUsage();
@@ -121,6 +134,7 @@ export function registerAutoModeHooks(pi: ExtensionAPI, runtime: Runtime): void 
 			});
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
+		if (!autoHooksEnabled(ctx.mode)) return;
 		const config = loadConfig(ctx.cwd);
 		if (config.mode !== "auto") return;
 		if (state.inFlight) return; // worker 正在固化同一份素材，跳过无损

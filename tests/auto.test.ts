@@ -1,12 +1,25 @@
 /**
- * auto 自动挡单元测试：只测纯函数（触发判定 / 尾部落盘 / 切块 / 库快照 diff），
- * 不真正 spawn worker。子进程通道见 worker.test.ts，素材与提示词见 prompts.test.ts。
+ * auto 自动挡单元测试：纯函数（触发判定 / 尾部落盘 / 切块 / 库快照 diff）+ 钩子的宿主归属。
+ * 全程不真正 spawn worker（无 API 消耗）：钩子用例只走 session_shutdown（纯 IO）与无头早退路径。
+ * 子进程通道见 worker.test.ts，素材与提示词见 prompts.test.ts。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearPendingTail, collectTranscriptWithPending, decideAutoTrigger, hasPendingTail, INITIAL_AUTO_STATE, splitPending, writePendingTail } from "../extension/auto.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	autoHooksEnabled,
+	clearPendingTail,
+	collectTranscriptWithPending,
+	decideAutoTrigger,
+	hasPendingTail,
+	INITIAL_AUTO_STATE,
+	registerAutoModeHooks,
+	splitPending,
+	writePendingTail,
+} from "../extension/auto.ts";
+import { Runtime } from "../extension/index.ts";
 import { diffLibrary, formatChanges, snapshotLibrary } from "../extension/library.ts";
 import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
 
@@ -46,6 +59,18 @@ describe("decideAutoTrigger", () => {
 	});
 });
 
+describe("autoHooksEnabled（一次性无头模式不参与 auto 挡）", () => {
+	it("交互会话与 rpc 宿主生效", () => {
+		expect(autoHooksEnabled("tui")).toBe(true);
+		expect(autoHooksEnabled("rpc")).toBe(true);
+	});
+
+	it("worker 的 json / print 模式不生效（否则递归 spawn + pending.md 被覆盖）", () => {
+		expect(autoHooksEnabled("json")).toBe(false);
+		expect(autoHooksEnabled("print")).toBe(false);
+	});
+});
+
 describe("会话边界尾部落盘", () => {
 	let cwd: string;
 	beforeEach(() => {
@@ -80,6 +105,94 @@ describe("会话边界尾部落盘", () => {
 		clearPendingTail(cwd);
 		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
 		expect(existsSync(join(memoryDir(cwd), "pending.md"))).toBe(false);
+	});
+});
+
+/**
+ * 钩子注册的宿主归属：worker 子进程同样加载本扩展并走完整个 session 生命周期，
+ * 且与宿主共用同一记忆库目录——必须在钩子入口即早退。
+ * 用例只驱动 session_shutdown（纯 IO）与 json 早退路径，不触发 spawn。
+ */
+describe("auto 钩子的宿主归属", () => {
+	/** 事件名 → 处理器（registerAutoModeHooks 注册进假 pi） */
+	type Handlers = Map<string, (event: unknown, ctx: unknown) => unknown>;
+	/** 最小 ctx 视口：只填 auto 钩子实际读取的字段 */
+	interface FakeCtx {
+		mode: string;
+		cwd: string;
+		sessionManager: { getEntries: () => unknown[] };
+		ui: { setWidget: () => void; notify: () => void };
+		getContextUsage: () => { tokens: number };
+	}
+
+	let cwd: string;
+	let handlers: Handlers;
+	/** session_start 是否碰过活动面板（守卫失效则先清面板再 spawn） */
+	let widgetTouched: boolean;
+
+	const pendingPath = (): string => join(memoryDir(cwd), "pending.md");
+	const readPending = (): string => readFileSync(pendingPath(), "utf8");
+
+	function fakeCtx(mode: string, entries: unknown[]): FakeCtx {
+		return {
+			mode,
+			cwd,
+			sessionManager: { getEntries: () => entries },
+			ui: { setWidget: () => (widgetTouched = true), notify: () => {} },
+			getContextUsage: () => ({ tokens: 0 }),
+		};
+	}
+
+	async function fire(type: string, ctx: FakeCtx): Promise<void> {
+		await handlers.get(type)?.({}, ctx);
+	}
+
+	beforeEach(() => {
+		cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-hooks-"));
+		process.env.MEMORY_DIR = join(cwd, ".memory");
+		widgetTouched = false;
+		// 挡位只存全局 settings：临时文件置 auto，让钩子进入"本会干活"分支
+		process.env.PI_GLOBAL_SETTINGS_FILE = join(cwd, "settings.json");
+		writeFileSync(process.env.PI_GLOBAL_SETTINGS_FILE, JSON.stringify({ "pi-lazy-evo": { mode: "auto" } }));
+		// 每个用例重新注册：state 是 registerAutoModeHooks 的闭包
+		handlers = new Map();
+		const pi = { on: (type: string, h: unknown) => handlers.set(type, h as never) } as unknown as ExtensionAPI;
+		registerAutoModeHooks(pi, new Runtime(pi, join(cwd, "protocol")));
+	});
+	afterEach(() => {
+		delete process.env.MEMORY_DIR;
+		delete process.env.PI_GLOBAL_SETTINGS_FILE;
+	});
+
+	const entry = { type: "message", message: { role: "user", content: "宿主会话素材" } };
+
+	it("worker（json）退出不落盘：不得覆盖宿主未固化的尾部素材", async () => {
+		writePendingTail(cwd, "宿主真实素材");
+		await fire("session_shutdown", fakeCtx("json", [entry]));
+		expect(readPending()).toBe("宿主真实素材");
+	});
+
+	it("worker（print）退出不落盘", async () => {
+		await fire("session_shutdown", fakeCtx("print", [entry]));
+		expect(hasPendingTail(cwd)).toBe(false);
+	});
+
+	it("交互会话退出才落盘会话尾部", async () => {
+		await fire("session_shutdown", fakeCtx("tui", [entry]));
+		expect(readPending()).toContain("宿主会话素材");
+	});
+
+	it("worker（json）的 session_start 不启动冲刷（pending.md 在则会递归 spawn）", async () => {
+		writePendingTail(cwd, "tail");
+		await fire("session_start", fakeCtx("json", []));
+		expect(widgetTouched).toBe(false);
+		expect(readPending()).toBe("tail");
+	});
+
+	it("worker（json）的 turn_end 不参与水位判定", async () => {
+		await fire("turn_end", fakeCtx("json", [entry]));
+		expect(widgetTouched).toBe(false);
+		expect(hasPendingTail(cwd)).toBe(false);
 	});
 });
 

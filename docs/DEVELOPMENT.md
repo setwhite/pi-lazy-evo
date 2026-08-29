@@ -54,7 +54,7 @@ bun run typecheck   # tsc strict，零错误
 | config.test.ts | settings.json 读写（pi-lazy-evo 命名空间） |
 | commands.test.ts | 命令注册、路由、两级补全、注入（独立会话工厂） |
 | prompts.test.ts | 素材抽取、任务纯数据、两条通道提示词组装 |
-| auto.test.ts | 触发判定、尾部落盘、切块、库快照 diff |
+| auto.test.ts | 触发判定、尾部落盘、切块、库快照 diff、钩子的宿主归属（worker 模式不参与） |
 | worker.test.ts | worker 参数组装、事件流活动描述、活动面板行管理 |
 
 ## 发布

@@ -59,6 +59,10 @@ extension/
 turn_end 水位触发 + session_start 启动冲刷，两条通道同一套 runAutoTasks；
 session_shutdown 只把会话尾部落盘 `.memory/pending.md`（纯 IO，不 spawn）。
 
+**钩子只在宿主会话生效**（`autoHooksEnabled(ctx.mode)`，三个钩子入口早退）：worker 子进程同样加载本扩展
+并走完 session 生命周期，且与宿主共用同一 `.memory/`——若不早退，session_start 见到 `pending.md` 会再
+spawn 一个 worker（无界递归），session_shutdown 会把 worker 自己的转录写进 `pending.md`（覆盖宿主素材）。
+
 **水位判定**（`decideAutoTrigger`，纯函数）：会话累计 token 增量达到 `autoWatermarkTokens` 触发一次。
 三个防循环规则：首次观察只吸收基线；token 回落（compaction）重设基线；worker 在跑（inFlight）时吸收增量。
 
