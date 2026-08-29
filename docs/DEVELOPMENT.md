@@ -5,7 +5,6 @@
 bun 运行时。提交前：
 
 ```bash
-cd extension
 bun test            # 单元测试（按域拆分，全绿）
 bun run typecheck   # tsc strict，零错误
 ```
@@ -61,4 +60,21 @@ bun run typecheck   # tsc strict，零错误
 | gate.test.ts | 门控聚合纯函数（含 3s 容差） |
 | config.test.ts | settings.json 读写（pi-lazy-evo 命名空间） |
 | commands.test.ts | 命令注册、路由、两级补全、注入（独立会话工厂） |
-| auto.test.ts | auto 判定、素材抽取、提示词组装、库快照 diff |
+| prompts.test.ts | 素材抽取、任务纯数据、主会话/worker 提示词组装 |
+| auto.test.ts | 触发判定、冲刷节流与尾部落盘、worker 参数组装、库快照 diff |
+
+## 发布
+
+```bash
+# 1) package.json 升版本（npm 不允许覆盖已发布版本，升级后再打 tag）
+# 2) 打 v* tag 触发 .github/workflows/npm-publish.yml
+git tag v0.1.8 && git push origin v0.1.8
+```
+
+发布经 npm trusted publishing（OIDC）认证，无需 API token。两个精确匹配约束：
+npm 页面的 workflow 文件名（`npm-publish.yml`）与 `package.json` 的 `repository.url`
+必须与仓库一致，否则发布失败；workflow 跑测试与类型检查通过后 `npm publish`，
+自动生成 provenance 来源证明。
+
+发布内容由 `files` 白名单决定（extension + docs）：改文档后需发版，包内 `docs/`
+与 npm 页面 README 才会更新。

@@ -13,17 +13,20 @@
 ## 目录结构
 
 ```
-extension/
-├── index.ts         # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令 + auto 钩子
-├── commands.ts      # 单一 /memory 入口：子命令表（路由/帮助/补全单一数据源）+ 6 个子命令
-├── auto.ts          # auto 挡：turn_end 水位判定 + record/verify 派发 + 无管道 spawn + 快照 diff
-├── prompts.ts       # 代理任务纯数据（AgentTask）+ 提示词组装注入（主会话/worker 共用）
-├── store.ts         # 存储域：布局 / 实体 / 验证记录 / 全库配对
-├── gate.ts          # 门控域：单实体四态判定 / 批量门控 / 待验筛选 / 全库摘要
-├── config.ts        # settings 命名空间读写（pi-lazy-evo）
-├── utils.ts         # 纯工具：frontmatter / 校验 / 文本提取 / 通知
-├── tests/           # bun:test 单元测试（按域拆分）
-└── protocol/        # 协议手册（代理执行契约）
+pi-lazy-evo/
+├── extension/       # 扩展实现
+│   ├── index.ts         # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令 + auto 钩子
+│   ├── commands.ts      # 单一 /memory 入口：子命令表（路由/帮助/补全单一数据源）+ 6 个子命令
+│   ├── auto.ts          # auto 挡：turn_end 水位判定 + record/verify 派发 + 无管道 spawn + 快照 diff
+│   ├── prompts.ts       # 代理任务纯数据（AgentTask）+ 提示词组装注入（主会话/worker 共用）
+│   ├── store.ts         # 存储域：布局 / 实体 / 验证记录 / 全库配对
+│   ├── gate.ts          # 门控域：单实体四态判定 / 批量门控 / 待验筛选 / 全库摘要
+│   ├── config.ts        # settings 命名空间读写（pi-lazy-evo）
+│   ├── utils.ts         # 纯工具：frontmatter / 校验 / 文本提取 / 通知
+│   └── protocol/        # 协议手册（代理执行契约）
+├── tests/               # bun:test 单元测试（按域拆分）
+├── docs/                # 用户指南 / 架构设计 / 开发指南（随 npm 包分发）
+└── .github/workflows/   # npm 发布（OIDC trusted publishing）
 ```
 
 依赖方向 `index → {commands, auto} → {prompts, gate, store} → utils`；utils 最底层
@@ -97,14 +100,22 @@ value 必须带子命令词（如 `mode auto`）。
 **worker 子进程（无管道通道）**：任务提示词写入临时文件，spawn 独立 `pi -p --no-session`
 子进程，`--tools` 传白名单、`--model` 传便宜模型（缺省主模型）、`--thinking low`。
 `spawn` 用 `non-detached + unref + stdio 全 ignore`：继承父控制台不弹窗（detached 在
-Windows 必弹新控制台），worker 只在主进程存活期跑，有 10 分钟超时 SIGKILL 宠底；轮数上限
-`autoMaxTurns` 只是提示词软约束，无硬杀；worker 成败由调用方用库快照 diff 判定，不读子进程输出。
+Windows 必弹新控制台）；超时兜底与结果判定依赖主进程存活——主进程退出后 worker 不随之终止
+（POSIX 变孤儿继续跑，Windows 视关闭方式可能连带终止）。轮数上限 `autoMaxTurns` 只是提示词
+软约束，无硬杀；worker 成败由调用方用库快照 diff 判定，不读子进程输出。
 
 **verify 并行批次**：待验实体按 `splitPending` 切块（块数 ≤ 并发上限 8），每块一个子进程
 并发跑；批次前后统一快照 diff，汇总一条通知（`Worker×N` + 结果/失败明细）。
 
 **结果通知**：worker 前后各拍一次库快照（实体 id→mtime + 验证记录文件名→target/result），
 diff 后一行通知：record 报 `+ 新增 / ~ 更新`，verify 报 `+ 验证：<id> ✅/⚠️`。
+
+**会话边界冲刷（session_shutdown）**：水位窗口之外的会话尾部增量在会话离开时补固化。
+`new` / `resume`（会话切换，主进程存活）：节流（`autoFlushMinTokens`，距上次固化增量不足
+跳过）通过则 spawn record worker 立即固化——只 record 不 verify（verify 只在水位触发跑），
+无通知；`quit` / `reload` / `fork`：不依赖子进程可靠性，尾部全量 transcript 落盘
+`.memory/pending.md`（纯 IO 覆盖写），下次任一 record（水位触发或冲刷）合并素材并消费
+（record 成功后删除）。
 
 ## 设计决策
 

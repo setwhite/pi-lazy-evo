@@ -18,7 +18,7 @@
 ## 挡位
 
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库
-- `auto`：会话进行中按 token 水位触发，后台便宜模型自动 record + verify
+- `auto`：会话进行中按 token 水位触发，会话切换/退出时冲刷尾部增量，后台便宜模型自动 record + verify
 
 auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即用）。分两个来源：
 - **mode** 只存全局 `~/.pi/agent/settings.json`——用户偏好，不入库不随仓库分发；`/memory mode` 切换的就是它
@@ -30,6 +30,7 @@ auto 配置在 `pi-lazy-evo` 命名空间（每次读取实时生效，改完即
 | `autoWatermarkTokens` | 32000 | 全局/项目 | 会话新增 token 达此值触发一次，越小越勤 |
 | `autoModel` | 缺省用主会话模型 | 全局/项目 | `provider` / `id` / `thinking`（默认 `low`） |
 | `autoMaxTurns` | 16 | 全局/项目 | worker 轮数上限（提示词软约束；主进程存活时另有 10 分钟超时硬宠底） |
+| `autoFlushMinTokens` | 8000 | 全局/项目 | 会话边界冲刷节流：距上次固化增量低于此值跳过（0 = 有素材即冲刷） |
 | `autoMemoTools` | read,grep,ls,bash,write,edit | 全局/项目 | record worker 工具白名单 |
 | `autoVerifyTools` | 左列 + web_search,web_fetch | 全局/项目 | verify worker 工具白名单 |
 
