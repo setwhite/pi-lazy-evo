@@ -1,6 +1,6 @@
 {
   "name": "pi-lazy-evo",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "pi agent 扩展：把会话信息沉淀为可验证的长期记忆（本地 md 存储 + 验证门控）",
   "keywords": ["pi-package"],
   "license": "MIT",
