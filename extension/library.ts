@@ -55,8 +55,7 @@ const FORMATTERS: Record<WorkerKind, (changes: LibraryChanges) => string> = {
 	},
 	verify: (c) => {
 		if (!c.newVerifications.length) return "no changes";
-		const list = c.newVerifications.map((v) => `${v.id} ${v.result === "passed" ? "✅" : "⚠️"}`).join(", ");
-		return `+ verified: ${list}`;
+		return c.newVerifications.map((v) => `${v.id} ${v.result === "passed" ? "✅" : "⚠️"}`).join(", ");
 	},
 };
 

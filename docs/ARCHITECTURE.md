@@ -74,7 +74,7 @@ stdout 事件流逐行解析（`turn_start` / `tool_execution_start`），每个
 主进程退出后管道断裂，worker 随会话终止（前台语义，不留孤儿）。
 
 **verify 并行批次**：待办实体（含 failed 修正流）按 `splitPending` 切块（块数 ≤ 并发上限 8），
-每块一个子进程并发跑；批次前后统一快照 diff，汇总一条通知（`verify×N`）。
+每块一个子进程并发跑；批次前后统一快照 diff，汇总一条通知（`verify:` 行，不提批次数）。
 
 **ctx 生命周期**：事件 ctx 在会话替换（new/resume/reload）后失效，不得跨 await 持有——
 处理器内只取纯值（cwd/transcript），通知与活动面板走 stale 兜底闭包（guardNotify / guardActivity）。

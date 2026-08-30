@@ -205,7 +205,7 @@ async function runAutoTasks({ runtime, cwd, config, transcript, notify: say, act
 		.filter((r): r is PromiseRejectedResult => r.status === "rejected")
 		.map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
 	const model = config.autoModel ? config.autoModel.id : "main model";
-	const lines = [`record: ${formatChanges("record", diffLibrary(before, mid))}`, `verify×${chunks.length}: ${formatChanges("verify", diffLibrary(mid, snapshotLibrary(cwd)))}`];
+	const lines = [`record: ${formatChanges("record", diffLibrary(before, mid))}`, `verify: ${formatChanges("verify", diffLibrary(mid, snapshotLibrary(cwd)))}`];
 	if (failures.length > 0) lines.push(`${failures.length} failed: ${failures.join("; ")}`);
 	say(`Memory Auto (${model})`, lines);
 }

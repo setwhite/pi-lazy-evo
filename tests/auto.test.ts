@@ -246,7 +246,7 @@ describe("formatChanges", () => {
 				{ id: "b", result: "failed" as const },
 			],
 		};
-		expect(formatChanges("verify", changes)).toBe("+ verified: a ✅, b ⚠️");
+		expect(formatChanges("verify", changes)).toBe("a ✅, b ⚠️");
 		expect(formatChanges("verify", { addedEntities: [], updatedEntities: [], newVerifications: [] })).toBe("no changes");
 	});
 });
