@@ -1,27 +1,33 @@
 /**
- * auto 自动挡单元测试：纯函数（触发判定 / 尾部落盘 / 切块 / 库快照 diff）+ 钩子的宿主归属。
- * 全程不真正 spawn worker（无 API 消耗）：钩子用例只走 session_shutdown（纯 IO）与无头早退路径。
+ * auto 自动挡单元测试：纯函数（触发判定 / 增量清单 / 波次并发 /存量提醒 / 库快照 diff）+ 钩子的宿主归属。
+ * 尾部暂存本体见 store.test.ts；全程不真正 spawn worker（无 API 消耗）：钩子用例只走 session_shutdown（纯 IO）与无头早退路径。
  * 子进程通道见 worker.test.ts，素材与提示词见 prompts.test.ts。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	autoHooksEnabled,
-	clearPendingTail,
-	collectTranscriptWithPending,
+	autoVerifyTargets,
+	backlogLines,
 	decideAutoTrigger,
-	hasPendingTail,
 	INITIAL_AUTO_STATE,
+	leftoverStock,
 	registerAutoModeHooks,
-	splitPending,
-	writePendingTail,
+	runBounded,
 } from "../extension/auto.ts";
 import { Runtime } from "../extension/index.ts";
-import { diffLibrary, formatChanges, snapshotLibrary } from "../extension/library.ts";
-import { appendVerification, memoryDir, writeEntity } from "../extension/store.ts";
+import { diffLibrary, formatChanges, snapshotLibrary, type LibraryChanges } from "../extension/library.ts";
+import type { GatedEntity, GateState } from "../extension/gate.ts";
+import {
+	appendVerification,
+	hasPendingTail,
+	memoryDir,
+	writeEntity,
+	writePendingTail,
+} from "../extension/store.ts";
 
 describe("decideAutoTrigger", () => {
 	it("首次观察吸收基线，不触发", () => {
@@ -71,48 +77,6 @@ describe("autoHooksEnabled（一次性无头模式不参与 auto 挡）", () => 
 	});
 });
 
-describe("会话边界尾部落盘", () => {
-	let cwd: string;
-	beforeEach(() => {
-		cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-tail-"));
-		process.env.MEMORY_DIR = join(cwd, ".memory");
-	});
-	afterEach(() => {
-		delete process.env.MEMORY_DIR;
-	});
-
-	it("落盘后可并入下次 record 素材", () => {
-		writePendingTail(cwd, "旧会话尾巴素材");
-		expect(collectTranscriptWithPending(cwd, "当前会话素材")).toBe("当前会话素材\n\n[上一会话未固化尾部]\n旧会话尾巴素材");
-	});
-
-	it("无落盘时素材原样", () => {
-		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
-	});
-
-	it("hasPendingTail：无文件/空文件为假，落盘后为真，消费后回假", () => {
-		expect(hasPendingTail(cwd)).toBe(false);
-		writePendingTail(cwd, "   ");
-		expect(hasPendingTail(cwd)).toBe(false); // 纯空白视为无
-		writePendingTail(cwd, "tail");
-		expect(hasPendingTail(cwd)).toBe(true);
-		clearPendingTail(cwd);
-		expect(hasPendingTail(cwd)).toBe(false);
-	});
-
-	it("record 成功后清理：清理后不再并入", () => {
-		writePendingTail(cwd, "tail");
-		clearPendingTail(cwd);
-		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
-		expect(existsSync(join(memoryDir(cwd), "pending.md"))).toBe(false);
-	});
-});
-
-/**
- * 钩子注册的宿主归属：worker 子进程同样加载本扩展并走完整个 session 生命周期，
- * 且与宿主共用同一记忆库目录——必须在钩子入口即早退。
- * 用例只驱动 session_shutdown（纯 IO）与 json 早退路径，不触发 spawn。
- */
 describe("auto 钩子的宿主归属", () => {
 	/** 事件名 → 处理器（registerAutoModeHooks 注册进假 pi） */
 	type Handlers = Map<string, (event: unknown, ctx: unknown) => unknown>;
@@ -251,30 +215,79 @@ describe("formatChanges", () => {
 	});
 });
 
-describe("splitPending", () => {
-	const item = (id: string): import("../extension/gate.ts").PendingEntity => ({ id, kind: "tool", state: "none" });
+describe("autoVerifyTargets", () => {
+	const gated = (id: string, state: GateState): GatedEntity => ({
+		meta: { id } as GatedEntity["meta"],
+		gate: { state } as GatedEntity["gate"],
+	});
+	const changes = (added: string[], updated: string[]): LibraryChanges => ({ addedEntities: added, updatedEntities: updated, newVerifications: [] });
 
-	it("空清单返回空数组", () => {
-		expect(splitPending([])).toEqual([]);
+	it("只挑本轮 record 新增/更新的实体（增量语义，存量积压不重验）", () => {
+		const all = [gated("a", "none"), gated("b", "stale"), gated("c", "failed"), gated("d", "passed")];
+		expect(autoVerifyTargets(all, changes(["a"], ["c"])).map((p) => p.id)).toEqual(["a", "c"]);
 	});
 
-	it("实体数不超过并发上限：每实体一块", () => {
-		const chunks = splitPending([item("a"), item("b"), item("c"), item("d")]);
-		expect(chunks).toHaveLength(4);
-		expect(chunks.flat().map((c) => c.id)).toEqual(["a", "b", "c", "d"]);
+	it("本轮无变化返回空清单", () => {
+		expect(autoVerifyTargets([gated("a", "stale")], changes([], []))).toEqual([]);
 	});
 
-	it("实体数超过并发上限：块数 ≤ 上限，且不丢不重", () => {
-		const many = Array.from({ length: 20 }, (_, i) => item(`e${i}`));
-		const chunks = splitPending(many);
-		expect(chunks.length).toBeLessThanOrEqual(8);
-		expect(chunks.flat().map((c) => c.id)).toEqual(many.map((c) => c.id));
+	it("diff 里有但库中不存在的 id（如随后被删）跳过", () => {
+		expect(autoVerifyTargets([], changes(["gone"], []))).toEqual([]);
+	});
+});
+
+describe("leftoverStock / backlogLines（存量提醒）", () => {
+	const gated = (id: string, state: GateState): GatedEntity => ({
+		meta: { id } as GatedEntity["meta"],
+		gate: { state } as GatedEntity["gate"],
+	});
+	const pending = (id: string, state: GateState): import("../extension/gate.ts").PendingEntity => ({ id, kind: "tool", state });
+
+	it("存量积压 = 全库待办减去本轮已验对象", () => {
+		const all = [gated("a", "none"), gated("b", "stale"), gated("c", "failed"), gated("d", "passed")];
+		expect(leftoverStock(all, [pending("a", "none"), pending("c", "failed")]).map((p) => p.id)).toEqual(["b"]);
 	});
 
-	it("边界：9 个实体切成 5 块（每块 ≤ 2）", () => {
-		const many = Array.from({ length: 9 }, (_, i) => item(`e${i}`));
-		const chunks = splitPending(many);
-		expect(chunks.length).toBe(5);
-		expect(Math.max(...chunks.map((c) => c.length))).toBeLessThanOrEqual(2);
+	it("无积压：backlogLines 返回空；有积压：提醒行指向 verify all", () => {
+		expect(backlogLines([])).toEqual([]);
+		expect(backlogLines([pending("b", "stale")])[0]).toBe("backlog 1: b — run /memory verify all to clear.");
+	});
+
+	it("超长 id 清单折叠为预览 + 计数", () => {
+		const many = Array.from({ length: 10 }, (_, i) => pending(`e${i}`, "none"));
+		const line = backlogLines(many)[0];
+		expect(line).toContain("backlog 10: e0, e1, e2, e3, e4, e5, e6, e7, … +2");
+	});
+});
+
+describe("runBounded", () => {
+	it("空清单返回空结果", async () => {
+		expect(await runBounded([], 3, async () => {})).toEqual([]);
+	});
+
+	it("全部执行不丢不重", async () => {
+		const seen: number[] = [];
+		const results = await runBounded([1, 2, 3, 4, 5], 2, async (n) => void seen.push(n));
+		expect(seen.sort()).toEqual([1, 2, 3, 4, 5]);
+		expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+	});
+
+	it("并发峰值不超上限", async () => {
+		let running = 0;
+		let peak = 0;
+		await runBounded(Array.from({ length: 10 }, (_, i) => i), 3, async () => {
+			running++;
+			peak = Math.max(peak, running);
+			await Bun.sleep(1);
+			running--;
+		});
+		expect(peak).toBeLessThanOrEqual(3);
+	});
+
+	it("单个失败不中断整批，结果逐个收集", async () => {
+		const results = await runBounded([1, 2, 3], 2, async (n) => {
+			if (n === 2) throw new Error("boom");
+		});
+		expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
 	});
 });

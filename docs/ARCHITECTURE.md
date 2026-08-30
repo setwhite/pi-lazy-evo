@@ -15,11 +15,11 @@
 extension/
 ├── index.ts       # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令与 auto 钩子
 ├── commands.ts    # /memory 单一入口：子命令表（路由/帮助/补全单一数据源）
-├── auto.ts        # auto 挡：水位判定 / 启动冲刷 / 尾部落盘 + 任务编排
+├── auto.ts        # auto 挡：水位判定 / 启动冲刷 + 任务编排（尾部暂存在 store 域）
 ├── worker.ts      # worker 子进程通道：--mode json 事件流 → 活动面板（前台可见）
 ├── library.ts     # 库快照与 diff（auto 挡结果通知的数据基础）
 ├── prompts.ts     # AgentTask 纯数据 + 提示词组装（主会话/worker 共用）
-├── store.ts       # 存储域：布局 / 实体 / 验证记录（尽力解析 + 非法忽略）
+├── store.ts       # 存储域：布局 / 实体 / 验证记录（尽力解析 + 非法忽略）/ 会话尾部暂存
 ├── gate.ts        # 门控域：四态推导 / 依赖失效 / 待验筛选（纯计算，无 IO）
 ├── deps.ts        # 统一读库入口 gatedLibrary(cwd)
 ├── config.ts      # settings.json pi-lazy-evo 命名空间读写
@@ -28,7 +28,7 @@ extension/
 ```
 
 依赖方向 `index → {commands, auto} → {worker, prompts, library, gate, store, deps} → utils`。
-边界约定：一切读库走 `deps.gatedLibrary`；`commands` 只做"解析 → 调 gate/prompts → 通知"；
+边界约定：一切读库走 `deps.gatedLibrary`；`commands` 只做"解析 → 调 store/gate/prompts → 通知"；
 `auto` 只做触发编排与任务串行/并发，任务语义来自 `prompts`；`prompts` 是任务纯数据，
 不复述手册内容（规则以 protocol/ 为唯一真相源）；`worker` 只管子进程通道与活动呈现。
 
@@ -49,7 +49,9 @@ extension/
 
 - `overview`：读库 → 门控 → 展示四态计数与待修正/待验清单（不注入）
 - `record` / `query` / `verify`：`recordTask / queryTask / verifyTask → injectTask` 注入主会话，
-  代理按协议执行；职责边界——扩展只把清单/索引算好注入，动作本身交给代理
+  代理按协议执行；职责边界——扩展只把清单/索引算好注入，动作本身交给代理。
+  verify 显式参数：`all` 清全库积压（待验+待修正），`<id>` 单实体复验，裸命令只展示用法与待办摘要——
+  不打参数不动库（`all` 是保留 id，`utils.validateId` 拒为实体名）
 - `mode`：读写全局 settings.json 的 `pi-lazy-evo` 命名空间（mode 只存全局，不改任何模型可见面）
 
 手动命令与 auto 挡共用同一套 AgentTask 语义，仅通道不同：手动走主会话注入，auto 走 worker 子进程。
@@ -57,7 +59,9 @@ extension/
 ## auto 挡
 
 turn_end 水位触发 + session_start 启动冲刷，两条通道同一套 runAutoTasks；
-session_shutdown 只把会话尾部落盘 `.memory/pending.md`（纯 IO，不 spawn）。
+session_shutdown 只把会话尾部落盘 `.memory/pending.md`（纯 IO，不 spawn）；
+消费方两条通道共用：auto 的 `runAutoTasks` 与手动 `/memory record`（派发时并入并消费，
+防 auto 中途切 manual 后尾部素材永久搁置）。
 
 **钩子只在宿主会话生效**（`autoHooksEnabled(ctx.mode)`，三个钩子入口早退）：worker 子进程同样加载本扩展
 并走完 session 生命周期，且与宿主共用同一 `.memory/`——若不早退，session_start 见到 `pending.md` 会再
@@ -69,12 +73,14 @@ spawn 一个 worker（无界递归），session_shutdown 会把 worker 自己的
 **worker 子进程（前台可见）**：提示词写临时文件，spawn `pi --mode json --no-session`，
 `--tools` 白名单、`--model` 便宜模型（缺省主模型）、`--thinking low`。
 stdout 事件流逐行解析（`turn_start` / `tool_execution_start`），每个 worker 在活动面板
-（`ctx.ui.setWidget`，编辑器上方）占一行，全部结束后面板清除、汇总一条通知。
+（`ctx.ui.setWidget`，编辑器上方）占一行（行键 = 任务/实体 id），全部结束后面板清除、汇总一条通知。
 成败仍以库快照 diff 判定（事件流只做展示，退出码仅兜底报错）；主进程存活期 10 分钟超时强杀进程树；
 主进程退出后管道断裂，worker 随会话终止（前台语义，不留孤儿）。
 
-**verify 并行批次**：待办实体（含 failed 修正流）按 `splitPending` 切块（块数 ≤ 并发上限 8），
-每块一个子进程并发跑；批次前后统一快照 diff，汇总一条通知（`verify:` 行，不提批次数）。
+**verify 只清增量债**：验证对象 = 本轮 record 新增/更新的实体（`autoVerifyTargets`，由前后快照 diff 得出），
+不重验存量积压（否则每轮触发都 O(积压) 重跑且无退避）；汇总通知带 `backlog N: …` 提醒行
+（`leftoverStock` / `backlogLines`），引导手动 `/memory verify all` 清账——auto 不碰存量，只报账。
+每个实体一个 worker（不做清单切块），`runBounded` 按 `autoVerifyConcurrency`（默认 8）分波并发。
 
 **ctx 生命周期**：事件 ctx 在会话替换（new/resume/reload）后失效，不得跨 await 持有——
 处理器内只取纯值（cwd/transcript），通知与活动面板走 stale 兜底闭包（guardNotify / guardActivity）。
@@ -89,6 +95,7 @@ stdout 事件流逐行解析（`turn_start` / `tool_execution_start`），每个
 | 门控实时计算、否决 state.json | 状态永远由实体+验证记录两个真相推出；早期缓存落盘实现被发现字段只写不读 |
 | 断言编号不回填存量 | 批量迁移是纯债；修正/新增自然生效，failed 记录首行编号清单驱动修正 |
 | 任务语义两条通道共用 | 手动与 auto 同一套 AgentTask，改动只在一处 |
+| auto verify 只验本轮增量、每实体一 worker | 全库重验是 O(积压) 成本且无退避；auto 管增量并提醒存量积压，manual `verify all` 清存量 |
 | 手册唯一真相源，提示词不复述 | 改手册即改行为，不用动代码；提示词短、省 token |
 | 事件流只做活动展示 | 成败以文件系统快照判定，UI 通道与正确性解耦 |
 | query 门控预计算注入 | 死板计算留在扩展代码，代理只做语义判断 |

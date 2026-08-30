@@ -1,7 +1,7 @@
 # 记忆库协议 — 验证
 
-由 `/memory verify [id]` 或 auto 任务触发：不带 id 处理全部待办实体（unverified / stale 验证 + failed 修正），
-带 id 全量复验该实体。追加任何记录前，先读本手册、entities.md 与 verifications.md。
+由 `/memory verify all`（全库待办：unverified / stale 验证 + failed 修正）、
+`/memory verify <id>`（全量复验该实体）或 auto 任务触发。追加任何记录前，先读本手册、entities.md 与 verifications.md。
 
 ## 纪律
 
@@ -17,5 +17,5 @@
    照常验证追加记录，收敛到 passed。禁止对未修正的正文重复验证。
 2. unverified / stale 实体：逐条核对断言，有把握才追加 passed；stale 实体先读其全部旧记录再下判断
    ——旧验证记录是复核的起点，失败记录尤其要读。
-3. 事实已无价值：正文保持不动，追加 failed 记录说明废弃理由。实体留在库中（failed 不归入待验，
-   `verify` 不会再找回它）。
+3. 事实已无价值：正文保持不动，追加 failed 记录说明废弃理由。实体留在库中（failed 进修正流，
+   若正文与最新 failed 记录均未变，`verify all` 会重复同一结论；需彻底停止重验可删除实体文件）。

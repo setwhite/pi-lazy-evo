@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMemoryCommands } from "../extension/commands.ts";
 import { buildAgentPrompt, queryTask, recordTask, verifyTask } from "../extension/prompts.ts";
-import { appendVerification, writeEntity } from "../extension/store.ts";
+import { appendVerification, clearPendingTail, hasPendingTail, writeEntity, writePendingTail } from "../extension/store.ts";
 import { Runtime } from "../extension/index.ts";
 
 const GLOBAL_SETTINGS_ENV = "PI_GLOBAL_SETTINGS_FILE";
@@ -90,25 +90,24 @@ describe("命令注册", () => {
 		expect(s.complete("mode")!.map((i) => i.value)).toEqual(["mode auto", "mode manual"]);
 		expect(s.complete("mode au")!.map((i) => i.value)).toEqual(["mode auto"]);
 		expect(s.complete("mode zz")).toBeNull();
-		expect(s.complete("verify")).toBeNull(); // 无参数候选的子命令不再自荐
 	});
 
-	it("verify 参数补全：动态列出库中实体 id", () => {
+	it("verify 参数补全：all 居首 + 动态列实体 id", () => {
 		const s = createSession();
 		s.runtime.cwd = s.cwd; // 模拟 session_start 捕获工作目录
 		writeEntity(s.cwd, { id: "alpha", kind: "tool", sources: "x", assertions: ["A."] });
 		writeEntity(s.cwd, { id: "小小吸血姬", kind: "concept", sources: "x", assertions: ["B."] });
-		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify alpha", "verify 小小吸血姬"]);
+		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify all", "verify alpha", "verify 小小吸血姬"]);
 		expect(s.complete("verify 小小")!.map((i) => i.value)).toEqual(["verify 小小吸血姬"]);
 		expect(s.complete("verify zz")).toBeNull();
 	});
 
-	it("verify 参数补全：对话中新增实体后下次补全可见（无缓存）", () => {
+	it("verify 参数补全：空库也有 all；对话中新增实体后下次补全可见（无缓存）", () => {
 		const s = createSession();
 		s.runtime.cwd = s.cwd;
-		expect(s.complete("verify")).toBeNull(); // 空库无候选
+		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify all"]);
 		writeEntity(s.cwd, { id: "new-entity", kind: "concept", sources: "x", assertions: ["A."] });
-		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify new-entity"]);
+		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify all", "verify new-entity"]);
 	});
 });
 
@@ -157,6 +156,15 @@ describe("/memory record / query", () => {
 		expect(s.sent.at(-1)!).toContain("记住测试约定");
 	});
 
+	it("record 并入并消费未固化会话尾部（pending.md 死角修复）", async () => {
+		const s = createSession();
+		writePendingTail(s.cwd, "上一会话尾部素材");
+		await s.run("record");
+		expect(s.sent.at(-1)!).toContain("上一会话尾部素材");
+		expect(s.notified.at(-1)!).toContain("Merged unflushed tail");
+		expect(hasPendingTail(s.cwd)).toBe(false);
+	});
+
 	it("query 注入检索词与预计算门控索引", async () => {
 		const s = createSession();
 		writeEntity(s.cwd, { id: "test-tool", kind: "tool", sources: "test", assertions: ["Tool."] });
@@ -176,31 +184,33 @@ describe("/memory record / query", () => {
 });
 
 describe("/memory verify", () => {
-	it("未验证实体进入注入清单", async () => {
+	it("verify all：全库待验实体进入注入清单", async () => {
 		const s = createSession();
 		writeEntity(s.cwd, { id: "test-idea", kind: "concept", sources: "test", assertions: ["Idea."] });
-		await s.run("verify");
+		await s.run("verify all");
 		expect(s.sent.at(-1)!).toContain("test-idea");
 		expect(s.sent.at(-1)!).toContain("待验证");
 	});
 
-	it("已通过验证的实体不进入默认清单；指定 id 时则复验", async () => {
+	it("裸 verify 不默认全量：展示用法与待办摘要，不注入", async () => {
 		const s = createSession();
-		writeEntity(s.cwd, { id: "test-tool", kind: "tool", sources: "test", assertions: ["Tool."] });
-		appendVerification(s.cwd, { entityId: "test-tool", validator: "test", result: "passed", body: "e" });
-		await s.run("verify");
-		expect(s.sent).toHaveLength(0); // 已验证实体不进入默认清单（无注入）
-		await s.run("verify test-tool");
-		expect(s.sent.at(-1)!).toContain("test-tool");
-	});
-
-	it("全部已验证时只通知、不注入", async () => {
-		const s = createSession();
-		writeEntity(s.cwd, { id: "test-tool", kind: "tool", sources: "test", assertions: ["Tool."] });
-		appendVerification(s.cwd, { entityId: "test-tool", validator: "test", result: "passed", body: "e" });
+		writeEntity(s.cwd, { id: "test-idea", kind: "concept", sources: "test", assertions: ["Idea."] });
 		await s.run("verify");
 		expect(s.sent).toHaveLength(0);
+		const notice = s.notified.at(-1)!;
+		expect(notice).toContain("Usage: /memory verify all");
+		expect(notice).toContain("Queue (1): test-idea");
+	});
+
+	it("已通过验证的实体不进 all 清单；指定 id 时则复验", async () => {
+		const s = createSession();
+		writeEntity(s.cwd, { id: "test-tool", kind: "tool", sources: "test", assertions: ["Tool."] });
+		appendVerification(s.cwd, { entityId: "test-tool", validator: "test", result: "passed", body: "e" });
+		await s.run("verify all");
+		expect(s.sent).toHaveLength(0); // 已验证实体不进入默认清单（无注入）
 		expect(s.notified.some((t) => t.includes("No entity needs verification."))).toBe(true);
+		await s.run("verify test-tool");
+		expect(s.sent.at(-1)!).toContain("test-tool");
 	});
 
 	it("指定不存在的 id 时提示 Entity not found", async () => {

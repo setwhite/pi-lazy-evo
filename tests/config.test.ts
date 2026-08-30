@@ -80,24 +80,27 @@ describe("loadConfig auto 配置", () => {
 		const config = loadConfig(cwd);
 		expect(config.autoWatermarkTokens).toBe(32_000);
 		expect(config.autoMaxTurns).toBe(16);
+		expect(config.autoVerifyConcurrency).toBe(8);
 		expect(config.autoModel).toBeUndefined();
 		expect(config.autoMemoTools).toEqual(["read", "grep", "ls", "bash", "write", "edit"]);
 		expect(config.autoVerifyTools).toEqual(["read", "grep", "ls", "bash", "write", "edit", "web_search", "web_fetch"]);
 	});
 
-	it("可配置阈值、轮数与便宜模型", () => {
-		settings({ autoWatermarkTokens: 8000, autoMaxTurns: 8, autoModel: { provider: "openrouter", id: "a-cheap-model", thinking: "low" } });
+	it("可配置阈值、轮数、verify 并发上限与便宜模型", () => {
+		settings({ autoWatermarkTokens: 8000, autoMaxTurns: 8, autoVerifyConcurrency: 3, autoModel: { provider: "openrouter", id: "a-cheap-model", thinking: "low" } });
 		const config = loadConfig(cwd);
 		expect(config.autoWatermarkTokens).toBe(8000);
 		expect(config.autoMaxTurns).toBe(8);
+		expect(config.autoVerifyConcurrency).toBe(3);
 		expect(config.autoModel).toEqual({ provider: "openrouter", id: "a-cheap-model", thinking: "low" });
 	});
 
 	it("非法阈值类型/非正数被忽略回默认", () => {
-		settings({ autoWatermarkTokens: "8000", autoMaxTurns: -1 });
+		settings({ autoWatermarkTokens: "8000", autoMaxTurns: -1, autoVerifyConcurrency: 0 });
 		const config = loadConfig(cwd);
 		expect(config.autoWatermarkTokens).toBe(32_000);
 		expect(config.autoMaxTurns).toBe(16);
+		expect(config.autoVerifyConcurrency).toBe(8);
 	});
 
 	it("autoModel 缺 provider 或 id 被忽略（回退主模型）", () => {

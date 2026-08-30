@@ -1,10 +1,10 @@
 /**
- * 存储域：记忆库布局 + 实体读写 + 验证记录（只追加）+ 全库配对。
+ * 存储域：记忆库布局 + 实体读写 + 验证记录（只追加）+ 会话尾部暂存 + 全库配对。
  * 目录骨架由扩展预建；读取层"尽力解析 + 非法忽略"（损坏/非法的文件一律不入库）。
  * 验证记录按实体归位于 verifications/<id>/ 子目录（旧平铺结构仍可读）；
  * 门控不读记录文件名（只信 checked_at 与 mtime），目录结构只是防重名与可维护性。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter, stripFrontmatter, validateId, validateKind } from "./utils.ts";
 
@@ -183,6 +183,41 @@ export function appendVerification(
 	const raw = `---\ntarget: entities/${input.entityId}.md\nvalidator: ${input.validator}\nchecked_at: ${input.checkedAt ?? stamp}\nresult: ${input.result}\n---\n\n${input.body.trim()}\n`;
 	writeFileSync(path, raw);
 	return path;
+}
+
+// ---- 会话尾部暂存（未固化素材，pending.md） ----
+
+/** 未固化尾部暂存文件名（记忆库根目录下） */
+const PENDING_TAIL_FILE = "pending.md";
+
+/** 覆盖写会话尾部素材（session_shutdown 全 reason 调用；纯 IO，不依赖 worker 进程存活） */
+export function writePendingTail(cwd: string, transcript: string): void {
+	writeFileSync(join(ensureMemoryDir(cwd), PENDING_TAIL_FILE), transcript, "utf8");
+}
+
+/** 是否存在未固化的会话尾部素材（空文件视为无） */
+export function hasPendingTail(cwd: string): boolean {
+	try {
+		return readFileSync(join(memoryDir(cwd), PENDING_TAIL_FILE), "utf8").trim().length > 0;
+	} catch {
+		return false;
+	}
+}
+
+/** 合并未固化尾部到 record 素材（有则拼接；无则原样）——auto 与手动 record 共用 */
+export function collectTranscriptWithPending(cwd: string, transcript: string): string {
+	let tail: string;
+	try {
+		tail = readFileSync(join(memoryDir(cwd), PENDING_TAIL_FILE), "utf8");
+	} catch {
+		return transcript;
+	}
+	return transcript ? `${transcript}\n\n[上一会话未固化尾部]\n${tail}` : tail;
+}
+
+/** 消费未固化尾部：auto 在 record worker 成功后调用；手动 record 在派发时调用 */
+export function clearPendingTail(cwd: string): void {
+	rmSync(join(memoryDir(cwd), PENDING_TAIL_FILE), { force: true });
 }
 
 // ---- 全库配对 ----

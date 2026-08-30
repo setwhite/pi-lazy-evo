@@ -202,7 +202,7 @@ async function spawnWorker(input: SpawnInput, onLine: (line: string) => void): P
 /** worker 运行输入（纯值 + 面板，不持有 UI ctx） */
 export interface WorkerRunInput {
 	kind: WorkerKind;
-	/** 面板行标识（如 record / verify#2） */
+	/** 面板行标识（record 或 "verify <实体id>"） */
 	rowId: string;
 	task: AgentTask;
 	protocolDir: string;

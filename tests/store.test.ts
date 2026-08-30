@@ -1,7 +1,7 @@
 /**
  * store 层单元测试：临时 MEMORY_DIR，不触碰真实库。
  * 覆盖：目录骨架、实体读写（来源去重）、验证记录（只追加 + 同日序号）、
- * 整库配对、校验规则、损坏记录丢弃。
+ * 整库配对、校验规则、损坏记录丢弃、会话尾部暂存。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
@@ -9,11 +9,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	appendVerification,
+	clearPendingTail,
+	collectTranscriptWithPending,
 	ensureMemoryDir,
+	hasPendingTail,
 	listVerifications,
 	readEntity,
 	readLibrary,
 	writeEntity,
+	writePendingTail,
 } from "../extension/store.ts";
 import { validateId, validateKind } from "../extension/utils.ts";
 
@@ -192,7 +196,7 @@ describe("readLibrary", () => {
 });
 
 describe("校验规则", () => {
-	it("id 只是名字：仅拒绝空/换行/路径分隔符", () => {
+	it("id 只是名字：拒绝空/换行/路径分隔符/保留词 all", () => {
 		expect(validateId("tool-name")).toBeNull();
 		expect(validateId("ToolName")).toBeNull();
 		expect(validateId("tool_name")).toBeNull();
@@ -202,6 +206,9 @@ describe("校验规则", () => {
 		expect(validateId("   ")).not.toBeNull();
 		expect(validateId("bad\nid")).not.toBeNull();
 		expect(validateId("bad/id")).not.toBeNull();
+		// 保留词：与 /memory verify all 撞车
+		expect(validateId("all")).not.toBeNull();
+		expect(validateId(" All ")).toBeNull(); // 仅精确小写 all 被保留（id 区分大小写）
 		expect(validateId("bad\\id")).not.toBeNull();
 	});
 
@@ -214,5 +221,35 @@ describe("校验规则", () => {
 	it("writeEntity 拒绝非法 id/kind（不写出不可见实体）", () => {
 		expect(() => writeEntity(cwd, { id: "bad/id", kind: "tool", sources: "x", assertions: ["A."] })).toThrow();
 		expect(() => writeEntity(cwd, { id: "good-id", kind: "misc", sources: "x", assertions: ["A."] })).toThrow();
+	});
+});
+
+describe("会话尾部暂存（pending.md）", () => {
+	it("落盘后可并入下次 record 素材", () => {
+		writePendingTail(cwd, "旧会话尾巴素材");
+		expect(collectTranscriptWithPending(cwd, "当前会话素材")).toBe("当前会话素材\n\n[上一会话未固化尾部]\n旧会话尾巴素材");
+	});
+
+	it("无落盘时素材原样；仅有尾部时单独成素材", () => {
+		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
+		writePendingTail(cwd, "tail");
+		expect(collectTranscriptWithPending(cwd, "")).toBe("tail");
+	});
+
+	it("hasPendingTail：无文件/空文件为假，落盘后为真，消费后回假", () => {
+		expect(hasPendingTail(cwd)).toBe(false);
+		writePendingTail(cwd, "   ");
+		expect(hasPendingTail(cwd)).toBe(false); // 纯空白视为无
+		writePendingTail(cwd, "tail");
+		expect(hasPendingTail(cwd)).toBe(true);
+		clearPendingTail(cwd);
+		expect(hasPendingTail(cwd)).toBe(false);
+	});
+
+	it("消费后不再并入（pending.md 文件已删除）", () => {
+		writePendingTail(cwd, "tail");
+		clearPendingTail(cwd);
+		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
+		expect(existsSync(join(mem, "pending.md"))).toBe(false);
 	});
 });

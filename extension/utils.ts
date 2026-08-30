@@ -24,10 +24,14 @@ export function stripFrontmatter(raw: string): string {
 /** id 禁用字符：换行/制表符（破坏 front-matter 单行）与路径分隔符（id 用作文件名） */
 const ID_FORBIDDEN_RE = /[\r\n\t/\\]/;
 
-/** id 合法性校验，返回错误信息或 null（id 只是名字：任意非空单行文本） */
+/** 保留 id：与 /memory 子命令参数关键字撞车的字面量不得作实体 id（verify all 歧义） */
+const RESERVED_IDS: ReadonlySet<string> = new Set(["all"]);
+
+/** id 合法性校验，返回错误信息或 null（id 只是名字：任意非空单行文本，保留词除外） */
 export function validateId(id: string): string | null {
 	if (id.trim().length === 0) return "id must not be empty";
 	if (ID_FORBIDDEN_RE.test(id)) return "id must not contain newlines, tabs, or path separators, got: " + id;
+	if (RESERVED_IDS.has(id.trim())) return "id is reserved by a command keyword: " + id;
 	return null;
 }
 

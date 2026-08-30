@@ -5,8 +5,8 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, setMode, type MemoryMode } from "./config.ts";
-import { selectPending, summarizeLibrary, toPending } from "./gate.ts";
-import { ensureMemoryDir, listEntities } from "./store.ts";
+import { selectPending, summarizeLibrary, toPending, type GatedEntity } from "./gate.ts";
+import { clearPendingTail, collectTranscriptWithPending, ensureMemoryDir, hasPendingTail, listEntities } from "./store.ts";
 import { gatedLibrary } from "./deps.ts";
 import { injectTask, queryTask, recordTask, verifyTask, type QueryIndexEntry } from "./prompts.ts";
 import { notify } from "./utils.ts";
@@ -15,7 +15,7 @@ import type { Runtime } from "./index.ts";
 /** 子命令 handler 统一签名（展示类命令忽略 runtime） */
 type SubHandler = (args: string, ctx: ExtensionCommandContext, runtime: Runtime) => Promise<void>;
 
-/** 参数候选来源：静态列表（mode）或动态读库（verify 列实体 id） */
+/** 参数候选来源：静态列表（mode）或"关键字 + 动态读库"（verify：all + 实体 id） */
 type ArgValues = string[] | ((runtime: Runtime) => string[]);
 
 /** 子命令条目：路由键 + 帮助面板 + 补全候选 + handler（help 无 handler） */
@@ -28,6 +28,9 @@ interface SubcommandDef {
 	argValues?: ArgValues;
 }
 
+/** /memory verify 参数里"全量清账"的关键字（保留词，validateId 禁止实体用此 id） */
+const VERIFY_ALL = "all";
+
 /** 子命令表（单一数据源：路由 / 帮助 / 补全共用） */
 const SUBCOMMANDS: SubcommandDef[] = [
 	{ name: "overview", hint: "", description: "library overview & verification queue", handler: overview },
@@ -35,10 +38,10 @@ const SUBCOMMANDS: SubcommandDef[] = [
 	{ name: "query", hint: "[terms]", description: "search memory", handler: query },
 	{
 		name: "verify",
-		hint: "[id]",
-		description: "verify unverified/stale entities",
+		hint: `[${VERIFY_ALL}|id]`,
+		description: "verify entities: all = whole queue, <id> = one entity",
 		handler: verify,
-		argValues: (runtime) => (runtime.cwd ? listEntities(runtime.cwd).map((e) => e.id) : []),
+		argValues: (runtime) => [VERIFY_ALL, ...(runtime.cwd ? listEntities(runtime.cwd).map((e) => e.id) : [])],
 	},
 	{ name: "mode", hint: "[auto|manual]", description: "show or switch mode", handler: mode, argValues: ["auto", "manual"] },
 	{ name: "help", hint: "", description: "show this help" },
@@ -106,20 +109,25 @@ async function overview(_args: string, ctx: ExtensionCommandContext, _runtime: R
 	];
 	if (fix.length) {
 		lines.push(`Needs fix (${fix.length}): ${fix.map(({ id }) => id).join(", ")}`);
-		lines.push("Run /memory verify — failed entities go through fix-then-reverify.");
+		lines.push("Run /memory verify all — failed entities go through fix-then-reverify.");
 	}
 	if (pending.length) {
 		lines.push(`Needs verification (${pending.length}): ${pending.map(({ id, state }) => `${id} (${state === "none" ? "unverified" : "stale"})`).join(", ")}`);
-		lines.push("Run /memory verify for a batch check.");
+		lines.push("Run /memory verify all for a batch check.");
 	}
 	if (mode === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
 	notify(ctx, "Memory Overview", lines);
 }
 
-/** /memory record [note]：派发记录任务（剩余参数作为附注素材） */
+/** /memory record [note]：派发记录任务（附注素材 + 未固化会话尾部，一并消费） */
 async function record(args: string, ctx: ExtensionCommandContext, runtime: Runtime): Promise<void> {
-	injectTask(runtime, recordTask(args.trim()));
-	notify(ctx, "Memory Record", ["Reminder injected — the agent will record memory now."]);
+	// 消费语义与 auto 挡对齐：并入手柄在派发时；auto 中途切 manual 不会丢上一会话尾部
+	const hadTail = hasPendingTail(ctx.cwd);
+	injectTask(runtime, recordTask(collectTranscriptWithPending(ctx.cwd, args.trim())));
+	clearPendingTail(ctx.cwd);
+	const lines = ["Reminder injected — the agent will record memory now."];
+	if (hadTail) lines.push("Merged unflushed tail from the previous session.");
+	notify(ctx, "Memory Record", lines);
 }
 
 /** /memory query [terms]：注入检索任务（附预计算门控索引） */
@@ -134,27 +142,44 @@ async function query(args: string, ctx: ExtensionCommandContext, runtime: Runtim
 	notify(ctx, "Memory Query", ["Reminder injected — the agent will search memory now."]);
 }
 
-/** /memory verify [id]：算出待验+待修正清单并派发验证任务（验证动作本身交给代理执行） */
+/** /memory verify all|<id>：全量清账或单实体复验，派发验证任务（验证动作本身交给代理执行）。
+ * 裸命令不默认全量：展示用法 + 待办摘要，避免"不打参数就动整个库"的隐藏动作。 */
 async function verify(args: string, ctx: ExtensionCommandContext, runtime: Runtime): Promise<void> {
-	const targetId = args.trim();
+	const target = args.trim();
 	const all = gatedLibrary(ctx.cwd);
 	if (!all.length) {
 		notify(ctx, "Memory Verify", ["Memory library is empty."]);
 		return;
 	}
-	const pending = selectPending(all, targetId);
-	if (targetId && !pending.length) {
-		notify(ctx, "Memory Verify", [`Entity not found: ${targetId}`]);
+	if (!target) {
+		notify(ctx, "Memory Verify", usageLines(all));
 		return;
 	}
-	if (!pending.length) {
-		notify(ctx, "Memory Verify", ["No entity needs verification."]);
+	const gated = target === VERIFY_ALL ? selectPending(all) : selectPending(all, target);
+	if (!gated.length) {
+		notify(ctx, "Memory Verify", [target === VERIFY_ALL ? "No entity needs verification." : `Entity not found: ${target}`]);
 		return;
 	}
-	injectTask(runtime, verifyTask(toPending(pending)));
-	const unit = pending.length === 1 ? "entity" : "entities";
-	notify(ctx, "Memory Verify", [`Reminder injected for ${pending.length} ${unit} — the agent will verify now.`]);
+	injectTask(runtime, verifyTask(toPending(gated)));
+	const unit = gated.length === 1 ? "entity" : "entities";
+	notify(ctx, "Memory Verify", [`Reminder injected for ${gated.length} ${unit} — the agent will verify now.`]);
 }
+
+/** 用法 + 待办摘要（裸 verify 展示；id 清单超长时截断） */
+function usageLines(all: GatedEntity[]): string[] {
+	const { pending, fix } = summarizeLibrary(all);
+	const queue = [...fix, ...pending];
+	const shown = queue.map(({ id }) => id);
+	const more = shown.length > QUEUE_PREVIEW_MAX ? shown.slice(0, QUEUE_PREVIEW_MAX).concat(`… +${shown.length - QUEUE_PREVIEW_MAX}`) : shown;
+	return [
+		`Usage: /memory verify ${VERIFY_ALL} — clear the whole queue (fix + verify)`,
+		"       /memory verify <id> — (re)verify one entity",
+		queue.length ? `Queue (${queue.length}): ${more.join(", ")}` : "Queue is empty: nothing needs verification.",
+	];
+}
+
+/** 裸 verify 待办清单预览上限（超出折叠为计数） */
+const QUEUE_PREVIEW_MAX = 10;
 
 /** 模式含义（一行文案） */
 const MODE_LABEL: Record<MemoryMode, string> = {

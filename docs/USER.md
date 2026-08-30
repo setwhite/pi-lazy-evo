@@ -8,9 +8,10 @@
 | 命令 | 作用 |
 |---|---|
 | `/memory overview` | 挡位、四态分布、待修正/待验清单（只展示，不派任务） |
-| `/memory record [note]` | 把近期长期结论写入记忆库；附注可限定范围 |
+| `/memory record [note]` | 把近期长期结论写入记忆库；附注可限定范围；自动并入并消费上一会话未固化尾部 |
 | `/memory query [terms]` | grep 检索记忆库；无关键词则由代理从会话推断 |
-| `/memory verify [id]` | 核对实体：不带 id 验证 unverified/stale + 修正 failed（先改正文再复验），带 id 全量复验该实体 |
+| `/memory verify all` | 清全库积压：unverified/stale 验证 + failed 修正（先改正文再复验） |
+| `/memory verify <id>` | 全量复验该实体（含 passed）；裸 `/memory verify` 只展示用法与待办清单，不动库 |
 | `/memory mode [auto\|manual]` | 查看或切换挡位 |
 | `/memory help` | 显示命令帮助 |
 
@@ -18,8 +19,10 @@
 
 - `manual`（默认）：只有手动 `/memory` 命令触碰记忆库
 - `auto`：会话按 token 水位自动跑 record + verify；离开会话时尾部素材落盘、下次启动立即固化。
-  worker 在前台可见：编辑器上方活动面板每个 worker 一行，实时显示"第几轮 · 正在做什么"
-  （record / verify#1 / verify#2 …），结束即清除并汇总一条通知
+  verify 只验**本轮新增/更新的实体**（每实体一个 worker）；存量积压不自动碰，
+  汇总通知会带一行积压提醒（`backlog N: …`），看到再跑 `/memory verify all` 清账即可。
+  worker 在前台可见：编辑器上方活动面板每个 worker 一行（record / 实体 id），实时显示"第几轮 · 正在做什么"，
+  结束即清除并汇总一条通知
 
 auto 配置在 `pi-lazy-evo` 命名空间（实时生效，改完即用）。mode 只存全局
 `~/.pi/agent/settings.json`（用户偏好，不入库不随仓库分发，`/memory mode` 切换的就是它）；
@@ -31,6 +34,7 @@ auto 配置在 `pi-lazy-evo` 命名空间（实时生效，改完即用）。mod
 | `autoWatermarkTokens` | 32000 | 全局/项目 | 会话新增 token 达此值触发一次，越小越勤 |
 | `autoModel` | 缺省用主会话模型 | 全局/项目 | `provider` / `id` / `thinking`（默认 `low`） |
 | `autoMaxTurns` | 16 | 全局/项目 | worker 轮数上限（提示词软约束；另有 10 分钟超时强杀兜底） |
+| `autoVerifyConcurrency` | 8 | 全局/项目 | auto verify 并发上限：每实体一个 worker，超出按波次排队 |
 | `autoMemoTools` | read,grep,ls,bash,write,edit | 全局/项目 | record worker 工具白名单 |
 | `autoVerifyTools` | 左列 + web_search,web_fetch | 全局/项目 | verify worker 工具白名单 |
 

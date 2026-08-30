@@ -16,7 +16,7 @@ bun run typecheck   # tsc strict，零错误
 依赖方向与边界约定见 `docs/ARCHITECTURE.md`，此处只列开发要点：
 
 - `utils.ts` 只放确定性小工具（frontmatter / 校验 / 文本提取 / 通知，无 IO 无业务）
-- `store.ts` 存储域整体，读取层"尽力解析 + 非法忽略"
+- `store.ts` 存储域整体（含 pending.md 会话尾部暂存），读取层"尽力解析 + 非法忽略"
 - `gate.ts` 门控域纯函数（无 IO），mtime 能力由 `deps.ts` 注入
 - 一切读库入口统一走 `deps.ts` 的 `gatedLibrary(cwd)`，调用方不自行拼装
 - `prompts.ts` 任务纯数据 + 组装注入；提示词不复述 protocol/ 手册内容
@@ -33,7 +33,8 @@ bun run typecheck   # tsc strict，零错误
 所有子命令挂在唯一 `memory` 入口（pi 派发只匹配第一词）。新增 `/memory foo`：
 
 1. 在 `commands.ts` 的 `SUBCOMMANDS` 表加一条：导出 `foo(args, ctx, runtime)`（统一签名，展示类命令忽略 runtime）
-2. 需参数补全时给 `argValues`（静态列表，或动态候选函数，如 verify 读库列实体 id）
+2. 需参数补全时给 `argValues`（静态列表，或动态候选函数，如 verify 列 `all` + 读库实体 id）。
+   参数关键字须同步 `utils.ts` 的 `RESERVED_IDS`（拒绝作实体 id，防命令与数据撞车）
 3. 在 `tests/commands.test.ts` 加用例；`docs/USER.md` 补用法
 
 需"读库→门控→注入"的命令参照 verify：`gatedLibrary → selectPending → verifyTask + injectTask → notify`。
@@ -57,7 +58,7 @@ bun run typecheck   # tsc strict，零错误
 | config.test.ts | settings.json 读写（pi-lazy-evo 命名空间） |
 | commands.test.ts | 命令注册、路由、两级补全、注入（独立会话工厂） |
 | prompts.test.ts | 素材抽取、任务纯数据、两条通道提示词组装 |
-| auto.test.ts | 触发判定、尾部落盘、切块、库快照 diff、钩子的宿主归属（worker 模式不参与） |
+| auto.test.ts | 触发判定、增量清单、波次并发、存量提醒、库快照 diff、钩子的宿主归属（worker 模式不参与） |
 | worker.test.ts | worker 参数组装、事件流活动描述、活动面板行管理 |
 
 ## 发布

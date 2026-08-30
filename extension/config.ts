@@ -37,6 +37,8 @@ export interface MemorySettings {
 	autoWatermarkTokens: number;
 	/** 后台 worker 最大轮数（成本上限） */
 	autoMaxTurns: number;
+	/** auto verify 并发上限：每个实体一个 worker，超出按波次排队 */
+	autoVerifyConcurrency: number;
 	/** 便宜模型（缺省用主会话模型） */
 	autoModel?: AutoModel;
 	/** record worker 工具白名单 */
@@ -45,11 +47,12 @@ export interface MemorySettings {
 	autoVerifyTools: string[];
 }
 
-/** 默认配置：手动挡；触发器 32k token；worker 上限 16 轮 */
+/** 默认配置：手动挡；触发器 32k token；worker 上限 16 轮；verify 并发上限 8 */
 const DEFAULTS: MemorySettings = {
 	mode: "manual",
 	autoWatermarkTokens: 32_000,
 	autoMaxTurns: 16,
+	autoVerifyConcurrency: 8,
 	autoMemoTools: [...DEFAULT_MEMO_TOOLS],
 	autoVerifyTools: [...DEFAULT_VERIFY_TOOLS],
 };
@@ -88,6 +91,7 @@ const FIELD_PARSERS: Record<keyof MemorySettings, (value: unknown) => unknown> =
 	mode: (v) => (v === "manual" || v === "auto" ? v : undefined),
 	autoWatermarkTokens: positiveInt,
 	autoMaxTurns: positiveInt,
+	autoVerifyConcurrency: positiveInt,
 	autoModel: parseAutoModel,
 	autoMemoTools: parseTools,
 	autoVerifyTools: parseTools,
