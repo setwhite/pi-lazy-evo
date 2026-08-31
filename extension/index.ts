@@ -1,18 +1,16 @@
 /**
- * pi-lazy-evo 扩展入口：装配 Runtime（协议路径 + 派发通道 + 会话 cwd），
- * 注册 /memory 命令与 auto 挡钩子。
+ * pi-lazy-evo 扩展入口：装配 Runtime（协议路径 + 派发通道 + 会话 cwd）并注册 /memory 命令。
  * 零工具注入：模型用通用工具（grep/read/write/bash）按 protocol 手册操作 .memory/。
  */
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMemoryCommands } from "./commands.ts";
-import { registerAutoModeHooks } from "./auto.ts";
 
 /** 协议手册目录：与扩展源码同目录。bun 按真实路径加载（软链解析后指向仓库 extension/），
  * protocol/ 随仓库分发，安装位与仓库分离后此路径依然成立。 */
 const PROTOCOL_DIR = join(import.meta.dirname, "protocol");
 
-/** 扩展运行时：共享状态与注入通道，依赖注入给命令与 auto 钩子，避免模块级全局变量 */
+/** 扩展运行时：协议目录 + 会话 cwd + 注入通道，依赖注入给命令，避免模块级全局变量 */
 export class Runtime {
 	/** 协议手册目录绝对路径：提示词据此指引模型阅读对应操作手册 */
 	readonly protocolDir: string;
@@ -38,5 +36,4 @@ export default function lazyMemoryExtension(pi: ExtensionAPI): void {
 		runtime.cwd = ctx.cwd;
 	});
 	registerMemoryCommands(pi, runtime);
-	registerAutoModeHooks(pi, runtime);
 }

@@ -1,25 +1,36 @@
 /**
  * commands 层单元测试：每个用例独立会话（临时库 + pi 桩 + 注册表），
  * 用例间零状态共享、顺序无关。
- * 覆盖：单入口注册与子命令路由、帮助面板、overview 空库提示、
- * record/query/verify 注入、verify 待验清单计算、mode 查看/切换、提示词构建。
+ * 覆盖：单入口注册与子命令路由、帮助面板、补全两级、overview 计数与待办清单、
+ * record（附注注入 / 无附注不重复喂转录）、query 索引注入、verify 清单计算与不默认全量。
  */
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMemoryCommands } from "../extension/commands.ts";
 import { buildAgentPrompt, queryTask, recordTask, verifyTask } from "../extension/prompts.ts";
-import { appendVerification, clearPendingTail, hasPendingTail, writeEntity, writePendingTail } from "../extension/store.ts";
 import { Runtime } from "../extension/index.ts";
+import { writeEntityFile, writeRecordFile } from "./helpers.ts";
 
-const GLOBAL_SETTINGS_ENV = "PI_GLOBAL_SETTINGS_FILE";
+/** 会话条目桩（结构兼容 TranscriptEntry） */
+interface EntryStub {
+	type: string;
+	message?: { role?: string; content?: unknown };
+}
+
+/** 命令 ctx 桩：只实现 commands.ts 实际用到的三处 */
+interface CtxStub {
+	cwd: string;
+	ui: { notify: (text: string) => void };
+	sessionManager: { getEntries: () => EntryStub[] };
+}
 
 /** 命令定义（与 pi 的注册结构对齐） */
 interface CommandDef {
 	description: string;
-	handler: (args: string, ctx: { cwd: string; ui: { notify: (text: string) => void } }) => void | Promise<void>;
+	handler: (args: string, ctx: CtxStub) => void | Promise<void>;
 	getArgumentCompletions?: (prefix: string) => { value: string; label: string; description?: string }[] | null;
 }
 
@@ -36,19 +47,15 @@ interface Session {
 	complete(prefix: string): { value: string; label: string; description?: string }[] | null;
 }
 
-/** 用例结束后还原 MEMORY_DIR 与全局 settings 覆盖，避免泄漏到其他测试文件（bun:test 单进程运行） */
+/** 用例结束后还原 MEMORY_DIR，避免泄漏到其他测试文件（bun:test 单进程运行） */
 afterEach(() => {
 	delete process.env.MEMORY_DIR;
-	delete process.env[GLOBAL_SETTINGS_ENV];
 });
 
-/** 组装隔离会话（每用例一个新会话，无共享状态） */
-function createSession(): Session {
+/** 组装隔离会话（每用例一个新会话，无共享状态）；entries 供 record 无附注时取转录 */
+function createSession(entries: EntryStub[] = []): Session {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-lazy-evo-commands-"));
-	// 每个会话独立的全局 settings 文件（位于会话私有目录），用例间零残留
 	process.env.MEMORY_DIR = join(cwd, ".memory");
-	process.env[GLOBAL_SETTINGS_ENV] = join(cwd, "global", ".pi", "agent", "settings.json");
-	mkdirSync(join(cwd, ".pi"), { recursive: true });
 	const notified: string[] = [];
 	const sent: string[] = [];
 	const commands = new Map<string, CommandDef>();
@@ -57,6 +64,7 @@ function createSession(): Session {
 		sendUserMessage: async (content: string) => void sent.push(content),
 	} as unknown as ExtensionAPI;
 	const runtime = new Runtime(pi);
+	runtime.cwd = cwd; // 模拟 session_start 捕获工作目录
 	registerMemoryCommands(pi, runtime);
 	return {
 		cwd,
@@ -65,7 +73,8 @@ function createSession(): Session {
 		notified,
 		sent,
 		run: async (args) => {
-			await commands.get("memory")!.handler(args, { cwd, ui: { notify: (t) => notified.push(t) } });
+			const ctx = { cwd, ui: { notify: (t: string) => notified.push(t) }, sessionManager: { getEntries: () => entries } } satisfies CtxStub;
+			await commands.get("memory")!.handler(args, ctx);
 		},
 		complete: (prefix) => commands.get("memory")!.getArgumentCompletions?.(prefix) ?? null,
 	};
@@ -73,40 +82,30 @@ function createSession(): Session {
 
 describe("命令注册", () => {
 	it("只注册一个 memory 入口命令", () => {
-		const s = createSession();
-		expect(s.names).toEqual(["memory"]);
+		expect(createSession().names).toEqual(["memory"]);
 	});
 
 	it("子命令补全：空前缀列全部，前缀过滤，无匹配返回 null", () => {
 		const s = createSession();
-		expect(s.complete("")).toHaveLength(6);
+		expect(s.complete("")).toHaveLength(5);
 		expect(s.complete("over")!.map((i) => i.value)).toEqual(["overview"]);
 		expect(s.complete("re")!.map((i) => i.value)).toEqual(["record"]);
 		expect(s.complete("zzz")).toBeNull();
 	});
 
-	it("参数补全：子命令词完整后给参数候选（value 带完整参数串）", () => {
-		const s = createSession();
-		expect(s.complete("mode")!.map((i) => i.value)).toEqual(["mode auto", "mode manual"]);
-		expect(s.complete("mode au")!.map((i) => i.value)).toEqual(["mode auto"]);
-		expect(s.complete("mode zz")).toBeNull();
-	});
-
 	it("verify 参数补全：all 居首 + 动态列实体 id", () => {
 		const s = createSession();
-		s.runtime.cwd = s.cwd; // 模拟 session_start 捕获工作目录
-		writeEntity(s.cwd, { id: "alpha", kind: "tool", sources: "x", assertions: ["A."] });
-		writeEntity(s.cwd, { id: "小小吸血姬", kind: "concept", sources: "x", assertions: ["B."] });
+		writeEntityFile(s.cwd, { id: "alpha" });
+		writeEntityFile(s.cwd, { id: "小小吸血姬", body: ["A1: 断言。"] });
 		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify all", "verify alpha", "verify 小小吸血姬"]);
 		expect(s.complete("verify 小小")!.map((i) => i.value)).toEqual(["verify 小小吸血姬"]);
 		expect(s.complete("verify zz")).toBeNull();
 	});
 
-	it("verify 参数补全：空库也有 all；对话中新增实体后下次补全可见（无缓存）", () => {
+	it("verify 参数补全：空库也有 all；新增实体后下次补全可见（无缓存）", () => {
 		const s = createSession();
-		s.runtime.cwd = s.cwd;
 		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify all"]);
-		writeEntity(s.cwd, { id: "new-entity", kind: "concept", sources: "x", assertions: ["A."] });
+		writeEntityFile(s.cwd, { id: "new-entity" });
 		expect(s.complete("verify")!.map((i) => i.value)).toEqual(["verify all", "verify new-entity"]);
 	});
 });
@@ -140,42 +139,67 @@ describe("/memory overview", () => {
 		expect(s.notified.some((t) => t.includes("Memory library is empty."))).toBe(true);
 		expect(s.sent).toHaveLength(0);
 	});
-});
 
-describe("/memory record / query", () => {
-	it("record 注入记录提醒", async () => {
+	it("四态计数 + 待修正排在待验证之前", async () => {
 		const s = createSession();
-		await s.run("record");
-		expect(s.sent.at(-1)!).toContain("[pi-lazy-evo]");
-		expect(s.sent.at(-1)!).toContain("长期结论");
+		const now = new Date().toISOString();
+		writeEntityFile(s.cwd, { id: "ok", kind: "tool" });
+		writeRecordFile(s.cwd, { entityId: "ok", checkedAt: now, result: "passed" });
+		writeEntityFile(s.cwd, { id: "broken", kind: "concept" });
+		writeRecordFile(s.cwd, { entityId: "broken", checkedAt: now, result: "failed" });
+		writeEntityFile(s.cwd, { id: "fresh" });
+		await s.run("overview");
+		const notice = s.notified.at(-1)!;
+		expect(notice).toContain("Entities 3 | passed 1 / failed 1 / unverified 1 / stale 0");
+		expect(notice).toContain("Needs fix (1): broken");
+		expect(notice).toContain("Needs verification (1): fresh");
+		expect(notice.indexOf("Needs fix")).toBeLessThan(notice.indexOf("Needs verification"));
 	});
 
-	it("record 剩余参数作为附注素材", async () => {
+	it("全库已验证时不输出待办行", async () => {
+		const s = createSession();
+		writeEntityFile(s.cwd, { id: "ok", kind: "tool" });
+		writeRecordFile(s.cwd, { entityId: "ok", checkedAt: new Date().toISOString(), result: "passed" });
+		await s.run("overview");
+		expect(s.notified.at(-1)).not.toContain("Needs");
+	});
+});
+
+describe("/memory record", () => {
+	it("带附注时用附注作素材", async () => {
 		const s = createSession();
 		await s.run("record 记住测试约定");
+		expect(s.sent.at(-1)!).toContain("[pi-lazy-evo]");
 		expect(s.sent.at(-1)!).toContain("记住测试约定");
 	});
 
-	it("record 并入并消费未固化会话尾部（pending.md 死角修复）", async () => {
-		const s = createSession();
-		writePendingTail(s.cwd, "上一会话尾部素材");
+	it("无附注时不注入转录——素材即代理当前会话，不得重复喂入", async () => {
+		const s = createSession([{ type: "message", message: { role: "user", content: "刚刚讨论出的结论" } }]);
 		await s.run("record");
-		expect(s.sent.at(-1)!).toContain("上一会话尾部素材");
-		expect(s.notified.at(-1)!).toContain("Merged unflushed tail");
-		expect(hasPendingTail(s.cwd)).toBe(false);
+		const sent = s.sent.at(-1)!;
+		expect(sent).not.toContain("刚刚讨论出的结论");
+		expect(sent).not.toContain("用户附注");
 	});
 
-	it("query 注入检索词与预计算门控索引", async () => {
+	it("无附注时仍派发任务，提示代理从本次会话沉淀", async () => {
 		const s = createSession();
-		writeEntity(s.cwd, { id: "test-tool", kind: "tool", sources: "test", assertions: ["Tool."] });
-		appendVerification(s.cwd, { entityId: "test-tool", validator: "test", result: "passed", body: "e" });
+		await s.run("record");
+		expect(s.sent.at(-1)!).toContain("按手册把本次会话中值得沉淀的结论写入库");
+	});
+});
+
+describe("/memory query", () => {
+	it("注入检索词与预计算门控索引", async () => {
+		const s = createSession();
+		writeEntityFile(s.cwd, { id: "test-tool", kind: "tool", sources: "test" });
+		writeRecordFile(s.cwd, { entityId: "test-tool", checkedAt: new Date().toISOString(), result: "passed" });
 		await s.run("query pi plugin");
 		const sent = s.sent.at(-1)!;
 		expect(sent).toContain("检索词：pi plugin");
 		expect(sent).toContain("- test-tool [tool] ✅ 已验证");
 	});
 
-	it("query 空库只通知不注入", async () => {
+	it("空库只通知不注入", async () => {
 		const s = createSession();
 		await s.run("query pi");
 		expect(s.sent).toHaveLength(0);
@@ -186,7 +210,7 @@ describe("/memory record / query", () => {
 describe("/memory verify", () => {
 	it("verify all：全库待验实体进入注入清单", async () => {
 		const s = createSession();
-		writeEntity(s.cwd, { id: "test-idea", kind: "concept", sources: "test", assertions: ["Idea."] });
+		writeEntityFile(s.cwd, { id: "test-idea", body: ["A1: 想法。"] });
 		await s.run("verify all");
 		expect(s.sent.at(-1)!).toContain("test-idea");
 		expect(s.sent.at(-1)!).toContain("待验证");
@@ -194,18 +218,26 @@ describe("/memory verify", () => {
 
 	it("裸 verify 不默认全量：展示用法与待办摘要，不注入", async () => {
 		const s = createSession();
-		writeEntity(s.cwd, { id: "test-idea", kind: "concept", sources: "test", assertions: ["Idea."] });
+		writeEntityFile(s.cwd, { id: "test-idea" });
 		await s.run("verify");
 		expect(s.sent).toHaveLength(0);
 		const notice = s.notified.at(-1)!;
 		expect(notice).toContain("Usage: /memory verify all");
-		expect(notice).toContain("Queue (1): test-idea");
+		expect(notice).toContain("Needs verification (1): test-idea");
+	});
+
+	it("裸 verify 待办为空时明确说明", async () => {
+		const s = createSession();
+		writeEntityFile(s.cwd, { id: "ok", kind: "tool" });
+		writeRecordFile(s.cwd, { entityId: "ok", checkedAt: new Date().toISOString(), result: "passed" });
+		await s.run("verify");
+		expect(s.notified.at(-1)).toContain("Queue is empty");
 	});
 
 	it("已通过验证的实体不进 all 清单；指定 id 时则复验", async () => {
 		const s = createSession();
-		writeEntity(s.cwd, { id: "test-tool", kind: "tool", sources: "test", assertions: ["Tool."] });
-		appendVerification(s.cwd, { entityId: "test-tool", validator: "test", result: "passed", body: "e" });
+		writeEntityFile(s.cwd, { id: "test-tool", kind: "tool" });
+		writeRecordFile(s.cwd, { entityId: "test-tool", checkedAt: new Date().toISOString(), result: "passed" });
 		await s.run("verify all");
 		expect(s.sent).toHaveLength(0); // 已验证实体不进入默认清单（无注入）
 		expect(s.notified.some((t) => t.includes("No entity needs verification."))).toBe(true);
@@ -215,7 +247,7 @@ describe("/memory verify", () => {
 
 	it("指定不存在的 id 时提示 Entity not found", async () => {
 		const s = createSession();
-		writeEntity(s.cwd, { id: "real-tool", kind: "tool", sources: "test", assertions: ["Tool."] });
+		writeEntityFile(s.cwd, { id: "real-tool", kind: "tool" });
 		await s.run("verify ghost");
 		expect(s.notified.some((t) => t.includes("Entity not found: ghost"))).toBe(true);
 	});
@@ -227,57 +259,18 @@ describe("/memory verify", () => {
 	});
 });
 
-describe("/memory mode", () => {
-	it("切换挡位并写入 settings.json", async () => {
-		const s = createSession();
-		await s.run("mode auto");
-		expect(s.notified.some((t) => t.includes("Mode switched to auto"))).toBe(true);
-		expect(s.notified.some((t) => t.includes("commands + auto record & verify"))).toBe(true);
-		await s.run("mode");
-		expect(s.notified.some((t) => t.includes("auto"))).toBe(true);
-	});
-
-	it("非法参数提示用法", async () => {
-		const s = createSession();
-		await s.run("mode turbo");
-		expect(s.notified.some((t) => t.includes("Usage: /memory mode [auto|manual]"))).toBe(true);
-	});
-
-	it("切 auto 且未配置 autoModel 时提醒配置", async () => {
-		const s = createSession();
-		await s.run("mode auto");
-		expect(s.notified.some((t) => t.includes("Mode switched to auto"))).toBe(true);
-		expect(s.notified.some((t) => t.includes("autoModel"))).toBe(true);
-	});
-
-	it("已配置 autoModel 时切 auto 不重复提醒", async () => {
-		const s = createSession();
-		const global = process.env[GLOBAL_SETTINGS_ENV]!;
-		mkdirSync(dirname(global), { recursive: true });
-		writeFileSync(global, JSON.stringify({ "pi-lazy-evo": { autoModel: { provider: "openrouter", id: "gpt-4o-mini" } } }, null, 2) + "\n");
-		await s.run("mode auto");
-		expect(s.notified.some((t) => t.includes("Mode switched to auto"))).toBe(true);
-		expect(s.notified.some((t) => t.includes("autoModel"))).toBe(false);
-	});
-});
-
-describe("动作与提示词", () => {
+describe("注入通道", () => {
 	it("主会话注入经 runtime 派发协议手册指引", () => {
 		const s = createSession();
 		s.runtime.dispatch(buildAgentPrompt(recordTask(), s.runtime.protocolDir, s.runtime.cwd));
 		expect(s.sent.at(-1)!).toContain(s.runtime.protocolDir);
 	});
 
-	it("record/verify 引用各自手册；query 不读手册、带预计算门控索引", () => {
-		const record = recordTask();
-		expect(record.formats).toEqual(["entities.md"]);
-		expect(record.manuals).not.toContain("verify.md");
-		const v = verifyTask([{ id: "pi", kind: "tool", state: "none" }]);
-		expect(v.material).toContain("- pi [tool] ❓ 未验证");
+	it("任务纯数据：record 只读实体面，verify 读两面，query 不读手册", () => {
+		expect(recordTask().formats).toEqual(["entities.md"]);
+		expect(verifyTask([{ id: "pi", kind: "tool", state: "none" }]).manuals).toEqual(["verify.md"]);
 		const q = queryTask("pi", [{ id: "pi", kind: "tool", state: "passed", path: "/x/pi.md" }]);
 		expect(q.formats).toEqual([]);
 		expect(q.manuals).toEqual([]);
-		expect(q.material).toContain("检索词：pi");
-		expect(q.material).toContain("- pi [tool] ✅ 已验证 — /x/pi.md");
 	});
 });

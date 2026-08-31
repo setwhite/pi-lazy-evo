@@ -1,6 +1,6 @@
 /**
  * 纯工具：无 IO 无业务，供各层共用。
- * front-matter 解析 / 实体格式校验 / 消息文本提取 / TUI 通知。
+ * front-matter 解析 / 实体格式校验 / TUI 通知。
  */
 
 /** 解析 front-matter 为字段映射；仅接受完整闭合（结尾 --- 独占一行），字段一律字符串。
@@ -44,18 +44,6 @@ export function validateKind(kind: string): string | null {
 		return "kind must be one of " + KINDS.join("/") + ", got: " + kind;
 	}
 	return null;
-}
-
-/** 消息 content 提取纯文本（兼容字符串与 block 数组） */
-export function messageText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (Array.isArray(content)) {
-		return content
-			.filter((b): b is { type: string; text?: unknown } => typeof b === "object" && b !== null && (b as { type?: unknown }).type === "text")
-			.map((b) => (typeof b.text === "string" ? b.text : ""))
-			.join("");
-	}
-	return "";
 }
 
 /** 最小 notify 视口：命令 ctx 与事件 ctx 通用（只依赖 ui.notify 的结构） */

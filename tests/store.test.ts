@@ -1,25 +1,16 @@
 /**
  * store 层单元测试：临时 MEMORY_DIR，不触碰真实库。
- * 覆盖：目录骨架、实体读写（来源去重）、验证记录（只追加 + 同日序号）、
- * 整库配对、校验规则、损坏记录丢弃、会话尾部暂存。
+ * 数据一律由 tests/helpers.ts 按 protocol 真实格式落盘（扩展不写库，测试也不借道写侧 API）。
+ * 覆盖：目录骨架、实体解析（含 depends-on 与非法忽略）、验证记录解析（脏数据丢弃）、
+ * 整库配对、id/kind 校验规则。
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	appendVerification,
-	clearPendingTail,
-	collectTranscriptWithPending,
-	ensureMemoryDir,
-	hasPendingTail,
-	listVerifications,
-	readEntity,
-	readLibrary,
-	writeEntity,
-	writePendingTail,
-} from "../extension/store.ts";
+import { ensureMemoryDir, listEntities, listVerifications, memoryDir, readLibrary } from "../extension/store.ts";
 import { validateId, validateKind } from "../extension/utils.ts";
+import { writeEntityFile, writeRecordFile } from "./helpers.ts";
 
 let cwd: string;
 let mem: string;
@@ -35,163 +26,153 @@ afterEach(() => {
 	delete process.env.MEMORY_DIR;
 });
 
+/** 直接写一个原始实体文件（构造损坏/非法等 fixture 造不出的输入） */
+function rawEntity(name: string, content: string): void {
+	mkdirSync(join(mem, "entities"), { recursive: true });
+	writeFileSync(join(mem, "entities", name), content, "utf8");
+}
+
+/** 直接写一条原始验证记录文件（同上：绕过 fixture 制造脏数据） */
+function rawRecord(name: string, content: string): void {
+	mkdirSync(join(mem, "verifications"), { recursive: true });
+	writeFileSync(join(mem, "verifications", name), content, "utf8");
+}
+
 describe("ensureMemoryDir", () => {
 	it("创建 entities/verifications 骨架", () => {
 		ensureMemoryDir(cwd);
 		expect(existsSync(join(mem, "entities"))).toBe(true);
 		expect(existsSync(join(mem, "verifications"))).toBe(true);
 	});
-});
 
-describe("writeEntity / readEntity", () => {
-	it("新建实体可回读（front-matter 三字段 + 正文断言）", () => {
-		const file = writeEntity(cwd, { id: "test-tool", kind: "tool", sources: "smoke test", assertions: ["A statement.", "Another statement."] });
-		expect(file.meta.id).toBe("test-tool");
-		expect(file.meta.kind).toBe("tool");
-		expect(file.body).toBe("A statement.\nAnother statement.");
-		const reread = readEntity(cwd, "test-tool")!;
-		expect(reread.meta.path).toBe(file.meta.path);
-		expect(reread.body).toBe(file.body);
-	});
-
-	it("更新实体：新出处分号追加", () => {
-		writeEntity(cwd, { id: "t", kind: "tool", sources: "a", assertions: ["X."] });
-		writeEntity(cwd, { id: "t", kind: "tool", sources: "b", assertions: ["X.", "Y."] });
-		expect(readEntity(cwd, "t")!.meta.sources).toBe("a；b");
-	});
-
-	it("更新实体：相同出处不重复追加", () => {
-		writeEntity(cwd, { id: "t", kind: "tool", sources: "a", assertions: ["X."] });
-		writeEntity(cwd, { id: "t", kind: "tool", sources: "a", assertions: ["X.", "Y."] });
-		expect(readEntity(cwd, "t")!.meta.sources).toBe("a");
-	});
-
-	it("不存在的实体返回 null", () => {
-		expect(readEntity(cwd, "missing")).toBeNull();
+	it("memoryDir 优先取 MEMORY_DIR 覆盖", () => {
+		expect(memoryDir(cwd)).toBe(mem);
+		delete process.env.MEMORY_DIR;
+		expect(memoryDir(cwd)).toBe(join(cwd, ".memory"));
 	});
 });
 
-describe("appendVerification / listVerifications", () => {
-	it("追加记录并回读（检查 target/result/evidence 完整）", () => {
-		appendVerification(cwd, { entityId: "t", validator: "code: echo ok", result: "passed", body: "e1" });
-		const records = listVerifications(cwd, "t");
-		expect(records).toHaveLength(1);
-		expect(records[0].target).toBe("entities/t.md");
-		expect(records[0].validator).toBe("code: echo ok");
-		expect(records[0].result).toBe("passed");
-		expect(records[0].evidence).toBe("e1");
+describe("listEntities 实体解析", () => {
+	it("四字段与正文均可回读，depends-on 逗号切分", () => {
+		writeEntityFile(cwd, { id: "t", kind: "tool", sources: "src", dependsOn: ["extension/a.ts", "extension/b.ts"], body: ["A1: 断言一。"] });
+		const [meta] = listEntities(cwd);
+		expect(meta.id).toBe("t");
+		expect(meta.kind).toBe("tool");
+		expect(meta.sources).toBe("src");
+		expect(meta.dependsOn).toEqual(["extension/a.ts", "extension/b.ts"]);
+		expect(meta.mtimeMs).toBeGreaterThan(0);
 	});
 
-	it("验证记录写入 <id>/ 子目录（按实体归位，同日多条自动序号）", () => {
-		appendVerification(cwd, { entityId: "t", validator: "v1", result: "passed", body: "e1" });
-		appendVerification(cwd, { entityId: "t", validator: "v2", result: "passed", body: "e2" });
-		appendVerification(cwd, { entityId: "t", validator: "v3", result: "passed", body: "e3" });
-		const files = readdirSync(join(mem, "verifications", "t")).sort();
-		expect(files).toHaveLength(3);
-		expect(files.some((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))).toBe(true);
-		expect(files.some((f) => f.endsWith("-2.md"))).toBe(true);
-		expect(files.some((f) => f.endsWith("-3.md"))).toBe(true);
-		expect(listVerifications(cwd, "t")).toHaveLength(3);
-	});
-
-	it("仍兼容读取旧平铺结构记录（verifications/<日期>-<id>.md）", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(
-			join(mem, "verifications", "2026-08-29-t.md"),
-			`---\ntarget: entities/t.md\nvalidator: v\nchecked_at: 2026-08-29T10:00:00+08:00\nresult: passed\n---\nlegacy evidence\n`,
-		);
-		const records = listVerifications(cwd, "t");
-		expect(records).toHaveLength(1);
-		expect(records[0]!.evidence).toBe("legacy evidence");
-	});
-
-	it("按实体 id 过滤；不匹配的 target 不返回", () => {
-		appendVerification(cwd, { entityId: "a", validator: "v", result: "passed", body: "e" });
-		appendVerification(cwd, { entityId: "b", validator: "v", result: "passed", body: "e" });
-		expect(listVerifications(cwd, "a")).toHaveLength(1);
-		expect(listVerifications(cwd, "b")).toHaveLength(1);
-	});
-
-	it("非法 result 的损坏记录被丢弃（不伪装成 passed）", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(join(mem, "verifications", "2026-01-01-bad.md"), "---\ntarget: entities/bad.md\nresult: weird\n---\nx\n");
-		expect(listVerifications(cwd, "bad")).toHaveLength(0);
-	});
-
-	it("target 带 .memory/ 前缀的旧记录被丢弃（精确匹配 entities/<id>.md）", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(join(mem, "verifications", "2026-01-01-old.md"), "---\ntarget: .memory/entities/old.md\nchecked_at: " + new Date().toISOString() + "\nresult: passed\n---\nx\n");
-		expect(listVerifications(cwd, "old")).toHaveLength(0);
-	});
-
-	it("checked_at 非完整 ISO（纯日期）的记录被丢弃", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(join(mem, "verifications", "2026-01-01-pure-date.md"), "---\ntarget: entities/pure-date.md\nchecked_at: 2026-01-01\nresult: passed\n---\nx\n");
-		expect(listVerifications(cwd, "pure-date")).toHaveLength(0);
-	});
-
-	it("旧版 evidence 字段不再读取：证据只取正文", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(join(mem, "verifications", "2026-01-01-legacy.md"), "---\ntarget: entities/legacy.md\nvalidator: v\nchecked_at: " + new Date().toISOString() + "\nresult: passed\nevidence: legacy-field\n---\n");
-		expect(listVerifications(cwd, "legacy")[0]!.evidence).toBe("");
-	});
-});
-
-describe("readLibrary", () => {
-	it("一次配对全部实体与各自验证记录", () => {
-		writeEntity(cwd, { id: "a", kind: "tool", sources: "s", assertions: ["A."] });
-		writeEntity(cwd, { id: "b", kind: "concept", sources: "s", assertions: ["B."] });
-		appendVerification(cwd, { entityId: "a", validator: "v1", result: "passed", body: "e1" });
-		appendVerification(cwd, { entityId: "a", validator: "v2", result: "failed", body: "e2" });
-		const library = readLibrary(cwd);
-		expect(library).toHaveLength(2);
-		const a = library.find((e) => e.meta.id === "a")!;
-		const b = library.find((e) => e.meta.id === "b")!;
-		expect(a.verifications).toHaveLength(2);
-		expect(b.verifications).toHaveLength(0);
-	});
-
-	it("无合法 front-matter 的损坏实体不入库", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(join(mem, "entities", "broken.md"), "no front-matter at all");
-		const library = readLibrary(cwd);
-		expect(library).toHaveLength(0);
-		expect(readEntity(cwd, "broken")).toBeNull();
-	});
-
-	it("无闭合 front-matter（只开头 ---）不入库", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(join(mem, "entities", "open.md"), "---\nid: open\nkind: tool\nsources: x\n\nbody without closing delimiter");
-		expect(readLibrary(cwd)).toHaveLength(0);
+	it("未声明 depends-on 时为空数组", () => {
+		writeEntityFile(cwd, { id: "t" });
+		expect(listEntities(cwd)[0].dependsOn).toEqual([]);
 	});
 
 	it("中文 id 实体正常入库（回归：query/verify 空库误报）", () => {
-		writeEntity(cwd, { id: "小小吸血姬", kind: "concept", sources: "s", assertions: ["A."] });
+		writeEntityFile(cwd, { id: "小小吸血姬", body: ["A1: 断言。"] });
+		expect(listEntities(cwd)[0].id).toBe("小小吸血姬");
+	});
+
+	it("front-matter 值带包裹引号仍能解析", () => {
+		rawEntity("quoted.md", '---\nid: quoted\nkind: tool\nsources: "带引号的出处"\n---\n\nA1: 断言。\n');
+		expect(listEntities(cwd)[0].sources).toBe("带引号的出处");
+	});
+
+	it("损坏实体不入库：无 front-matter / 未闭合 / id 或 kind 非法", () => {
+		rawEntity("broken.md", "no front-matter at all");
+		rawEntity("open.md", "---\nid: open\nkind: tool\nsources: x\n\n正文无闭合分隔线");
+		rawEntity("bad-id.md", "---\nid: bad/id\nkind: tool\nsources: x\n---\n");
+		rawEntity("bad-kind.md", "---\nid: bad-kind\nkind: misc\nsources: x\n---\n");
+		expect(listEntities(cwd)).toHaveLength(0);
+	});
+
+	it("非 .md 文件与空目录一律忽略", () => {
+		rawEntity("note.txt", "---\nid: note\nkind: tool\nsources: x\n---\n");
+		expect(listEntities(cwd)).toHaveLength(0);
+	});
+
+	it("正文含 --- 分隔线不破坏 front-matter 解析", () => {
+		writeEntityFile(cwd, { id: "doc", kind: "tool", sources: "t", body: ["A1: 第一行。", "---", "A2: 第二行。"] });
+		const [meta] = listEntities(cwd);
+		expect(meta.sources).toBe("t");
+		expect(meta.id).toBe("doc");
+	});
+});
+
+describe("listVerifications 记录解析", () => {
+	const AT = "2026-08-30T10:00:00+08:00";
+
+	it("解析 target/validator/result/evidence/checkedAtMs 全字段", () => {
+		writeRecordFile(cwd, { entityId: "t", checkedAt: AT, result: "passed", validator: "code: echo ok", body: "e1" });
+		const [r] = listVerifications(cwd, "t");
+		expect(r.target).toBe("entities/t.md");
+		expect(r.validator).toBe("code: echo ok"); // 纯透传：词表外的值不报错、不猜测
+		expect(r.result).toBe("passed");
+		expect(r.evidence).toBe("e1");
+		expect(r.checkedAtMs).toBe(Date.parse(AT));
+	});
+
+	it("按实体归位子目录读取；entityId 过滤时 target 不匹配的不返回", () => {
+		writeRecordFile(cwd, { entityId: "a", checkedAt: AT, result: "passed" });
+		writeRecordFile(cwd, { entityId: "b", checkedAt: AT, result: "passed" });
+		expect(listVerifications(cwd, "a")).toHaveLength(1);
+		expect(listVerifications(cwd, "b")).toHaveLength(1);
+		expect(listVerifications(cwd)).toHaveLength(2);
+	});
+
+	it("同一实体的多条记录全部读回（门控只信 checked_at，不信文件名）", () => {
+		writeRecordFile(cwd, { entityId: "t", checkedAt: AT, result: "passed", seq: 1 });
+		writeRecordFile(cwd, { entityId: "t", checkedAt: AT, result: "failed", seq: 2 });
+		expect(listVerifications(cwd, "t")).toHaveLength(2);
+	});
+
+	it("仍兼容读取旧平铺结构（verifications/<日期>-<id>.md）", () => {
+		rawRecord("2026-08-29-t.md", `---\ntarget: entities/t.md\nvalidator: v\nchecked_at: ${AT}\nresult: passed\n---\nlegacy evidence\n`);
+		expect(listVerifications(cwd, "t")[0].evidence).toBe("legacy evidence");
+	});
+
+	it("脏数据一律丢弃：result 非法 / checked_at 非完整 ISO（纯日期）", () => {
+		rawRecord("bad-result.md", "---\ntarget: entities/bad.md\nchecked_at: 2026-01-01T00:00:00Z\nresult: weird\n---\nx\n");
+		rawRecord("pure-date.md", "---\ntarget: entities/d.md\nchecked_at: 2026-01-01\nresult: passed\n---\nx\n");
+		expect(listVerifications(cwd)).toHaveLength(0);
+	});
+
+	it("target 必须精确匹配 entities/<id>.md：带 .memory/ 前缀的旧写法读不到", () => {
+		rawRecord("old.md", `---\ntarget: .memory/entities/old.md\nchecked_at: ${AT}\nresult: passed\n---\nx\n`);
+		expect(listVerifications(cwd, "old")).toHaveLength(0);
+	});
+
+	it("旧版 evidence 字段不再读取：证据只取正文", () => {
+		rawRecord("legacy.md", `---\ntarget: entities/legacy.md\nvalidator: v\nchecked_at: ${AT}\nresult: passed\nevidence: legacy-field\n---\n正文证据\n`);
+		expect(listVerifications(cwd, "legacy")[0].evidence).toBe("正文证据");
+	});
+
+	it("证据正文含 --- 行不被截断", () => {
+		writeRecordFile(cwd, { entityId: "t", checkedAt: AT, result: "passed", body: "命令输出\n---\n尾部" });
+		expect(listVerifications(cwd, "t")[0].evidence).toBe("命令输出\n---\n尾部");
+	});
+});
+
+describe("readLibrary 全库配对", () => {
+	const AT = "2026-08-30T10:00:00+08:00";
+
+	it("一次配对全部实体与各自验证记录", () => {
+		writeEntityFile(cwd, { id: "a" });
+		writeEntityFile(cwd, { id: "b" });
+		writeRecordFile(cwd, { entityId: "a", checkedAt: AT, result: "passed", seq: 1 });
+		writeRecordFile(cwd, { entityId: "a", checkedAt: AT, result: "failed", seq: 2 });
 		const library = readLibrary(cwd);
-		expect(library).toHaveLength(1);
-		expect(library[0].meta.id).toBe("小小吸血姬");
+		expect(library).toHaveLength(2);
+		expect(library.find((e) => e.meta.id === "a")!.verifications).toHaveLength(2);
+		expect(library.find((e) => e.meta.id === "b")!.verifications).toHaveLength(0);
 	});
 
-	it("id/kind 格式非法的实体不入库", () => {
-		ensureMemoryDir(cwd);
-		writeFileSync(join(mem, "entities", "bad-id.md"), "---\nid: bad/id\nkind: tool\nsources: x\n---\n");
-		writeFileSync(join(mem, "entities", "bad-kind.md"), "---\nid: bad-kind\nkind: misc\nsources: x\n---\n");
+	it("孤儿记录（实体不存在）不进结果，实体无记录时配空数组", () => {
+		writeRecordFile(cwd, { entityId: "ghost", checkedAt: AT, result: "passed" });
+		writeEntityFile(cwd, { id: "a" });
 		const library = readLibrary(cwd);
-		expect(library).toHaveLength(0);
-	});
-
-	it("正文含 --- 分隔线不截断 body", () => {
-		writeEntity(cwd, { id: "doc-tool", kind: "tool", sources: "t", assertions: ["First line.", "---", "Second line."] });
-		expect(readEntity(cwd, "doc-tool")!.body).toBe("First line.\n---\nSecond line.");
-	});
-
-	it("front-matter 值带包裹引号仍能解析（checked_at 引号容错）", () => {
-		const dir = join(mem, "verifications", "quoted");
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "2026-08-29.md"), '---\ntarget: entities/quoted.md\nvalidator: code\nchecked_at: "2026-08-29T10:00:00+08:00"\nresult: passed\n---\n\n证据\n');
-		const list = listVerifications(cwd, "quoted");
-		expect(list).toHaveLength(1);
-		expect(list[0].checkedAt).toBe("2026-08-29T10:00:00+08:00");
+		expect(library.map((e) => e.meta.id)).toEqual(["a"]);
+		expect(library[0].verifications).toEqual([]);
 	});
 });
 
@@ -206,10 +187,10 @@ describe("校验规则", () => {
 		expect(validateId("   ")).not.toBeNull();
 		expect(validateId("bad\nid")).not.toBeNull();
 		expect(validateId("bad/id")).not.toBeNull();
+		expect(validateId("bad\\id")).not.toBeNull();
 		// 保留词：与 /memory verify all 撞车
 		expect(validateId("all")).not.toBeNull();
 		expect(validateId(" All ")).toBeNull(); // 仅精确小写 all 被保留（id 区分大小写）
-		expect(validateId("bad\\id")).not.toBeNull();
 	});
 
 	it("kind 必须是协议五类之一", () => {
@@ -217,39 +198,15 @@ describe("校验规则", () => {
 		expect(validateKind("decision")).toBeNull();
 		expect(validateKind("misc")).not.toBeNull();
 	});
-
-	it("writeEntity 拒绝非法 id/kind（不写出不可见实体）", () => {
-		expect(() => writeEntity(cwd, { id: "bad/id", kind: "tool", sources: "x", assertions: ["A."] })).toThrow();
-		expect(() => writeEntity(cwd, { id: "good-id", kind: "misc", sources: "x", assertions: ["A."] })).toThrow();
-	});
 });
 
-describe("会话尾部暂存（pending.md）", () => {
-	it("落盘后可并入下次 record 素材", () => {
-		writePendingTail(cwd, "旧会话尾巴素材");
-		expect(collectTranscriptWithPending(cwd, "当前会话素材")).toBe("当前会话素材\n\n[上一会话未固化尾部]\n旧会话尾巴素材");
-	});
-
-	it("无落盘时素材原样；仅有尾部时单独成素材", () => {
-		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
-		writePendingTail(cwd, "tail");
-		expect(collectTranscriptWithPending(cwd, "")).toBe("tail");
-	});
-
-	it("hasPendingTail：无文件/空文件为假，落盘后为真，消费后回假", () => {
-		expect(hasPendingTail(cwd)).toBe(false);
-		writePendingTail(cwd, "   ");
-		expect(hasPendingTail(cwd)).toBe(false); // 纯空白视为无
-		writePendingTail(cwd, "tail");
-		expect(hasPendingTail(cwd)).toBe(true);
-		clearPendingTail(cwd);
-		expect(hasPendingTail(cwd)).toBe(false);
-	});
-
-	it("消费后不再并入（pending.md 文件已删除）", () => {
-		writePendingTail(cwd, "tail");
-		clearPendingTail(cwd);
-		expect(collectTranscriptWithPending(cwd, "t")).toBe("t");
-		expect(existsSync(join(mem, "pending.md"))).toBe(false);
+describe("验证记录防重名（扩展不写库，命名归代理）", () => {
+	it("同日多条各自成文件且全部读得回，不互相覆盖", () => {
+		const at = "2026-08-30T10:00:00+08:00";
+		writeRecordFile(cwd, { entityId: "t", checkedAt: at, result: "failed", body: "第一次推翻", seq: 1 });
+		writeRecordFile(cwd, { entityId: "t", checkedAt: at, result: "passed", body: "修正后复验", seq: 2 });
+		const evidences = listVerifications(cwd, "t").map((r) => r.evidence);
+		expect(evidences).toContain("第一次推翻");
+		expect(evidences).toContain("修正后复验");
 	});
 });

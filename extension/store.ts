@@ -1,10 +1,10 @@
 /**
- * 存储域：记忆库布局 + 实体读写 + 验证记录（只追加）+ 会话尾部暂存 + 全库配对。
- * 目录骨架由扩展预建；读取层"尽力解析 + 非法忽略"（损坏/非法的文件一律不入库）。
+ * 存储域：记忆库布局 + 实体与验证记录的读取（尽力解析 + 非法忽略）+ 全库配对。
+ * 只读：零工具注入下代理按 protocol 手册用通用工具直接落盘，扩展不写库（仅预建目录骨架）。
  * 验证记录按实体归位于 verifications/<id>/ 子目录（旧平铺结构仍可读）；
  * 门控不读记录文件名（只信 checked_at 与 mtime），目录结构只是防重名与可维护性。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter, stripFrontmatter, validateId, validateKind } from "./utils.ts";
 
@@ -15,7 +15,7 @@ export function memoryDir(cwd: string | undefined): string {
 	return process.env.MEMORY_DIR ?? join(cwd ?? process.cwd(), ".memory");
 }
 
-/** 确保 entities/verifications 目录骨架存在（写入口与命令派发前调用） */
+/** 确保 entities/verifications 目录骨架存在（命令派发前调用：代理要往那儿写，目录得先在） */
 export function ensureMemoryDir(cwd: string): string {
 	const dir = memoryDir(cwd);
 	for (const sub of ["", "entities", "verifications"]) {
@@ -41,15 +41,6 @@ export interface EntityMeta {
 	dependsOn: string[];
 	/** 文件修改时间戳（毫秒） */
 	mtimeMs: number;
-}
-
-/** 实体全文 */
-export interface EntityFile {
-	meta: EntityMeta;
-	/** 原始文件内容 */
-	raw: string;
-	/** 正文断言文本（front-matter 之外） */
-	body: string;
 }
 
 /** 列出全部实体：仅收录 front-matter 与 id/kind 均合法的文件，其余忽略 */
@@ -82,36 +73,6 @@ function parseEntityMeta(path: string): Pick<EntityMeta, "id" | "kind" | "source
 		.map((p) => p.trim())
 		.filter(Boolean);
 	return { id: String(fm.id ?? ""), kind: String(fm.kind ?? ""), sources: String(fm.sources ?? ""), dependsOn };
-}
-
-/** 读取实体全文；不存在返回 null */
-export function readEntity(cwd: string, id: string): EntityFile | null {
-	const meta = listEntities(cwd).find((e) => e.id === id);
-	if (!meta) return null;
-	const raw = readFileSync(meta.path, "utf8");
-	return { meta, raw, body: stripFrontmatter(raw) };
-}
-
-/** 合并出处：已有且不含新出处则分号追加（保持 front-matter 单行） */
-function mergeSources(existing: string | undefined, source: string): string {
-	if (!existing) return source;
-	return existing.split("；").includes(source) ? existing : `${existing}；${source}`;
-}
-
-/** 写入或更新实体；更新时出处追加去重；id/kind 非法抛错 */
-export function writeEntity(cwd: string, input: { id: string; kind: string; sources: string; assertions: string[] }): EntityFile {
-	const idError = validateId(input.id);
-	if (idError) throw new Error(idError);
-	const kindError = validateKind(input.kind);
-	if (kindError) throw new Error(kindError);
-	ensureMemoryDir(cwd);
-	const existing = readEntity(cwd, input.id);
-	const sources = mergeSources(existing?.meta.sources, input.sources);
-	const path = existing?.meta.path ?? join(memoryDir(cwd), "entities", input.id + ".md");
-	const raw = `---\nid: ${input.id}\nkind: ${input.kind}\nsources: ${sources}\n---\n\n${input.assertions.join("\n")}\n`;
-	writeFileSync(path, raw);
-	const body = input.assertions.join("\n");
-	return { meta: { id: input.id, path, kind: input.kind, sources, dependsOn: [], mtimeMs: statSync(path).mtimeMs }, raw, body };
 }
 
 // ---- 验证记录 ----
@@ -166,58 +127,6 @@ function parseVerification(path: string, targetSuffix: string | null): Verificat
 	const checkedAtMs = checkedAt.includes("T") ? Date.parse(checkedAt) : NaN;
 	if (!(checkedAtMs > 0)) return null; // checked_at 必须是完整 ISO（含时刻）
 	return { path, target, validator: String(fm.validator ?? ""), checkedAt, result: fm.result, evidence: stripFrontmatter(raw), checkedAtMs };
-}
-
-/** 追加验证记录（只追加）：verifications/<id>/<日期>[-N].md，同日多条自动加序号，返回记录文件路径 */
-export function appendVerification(
-	cwd: string,
-	input: { entityId: string; validator: string; result: "passed" | "failed"; body: string; checkedAt?: string },
-): string {
-	ensureMemoryDir(cwd);
-	const dir = join(memoryDir(cwd), "verifications", input.entityId);
-	mkdirSync(dir, { recursive: true });
-	const stamp = new Date().toISOString();
-	const base = stamp.slice(0, 10);
-	let path = join(dir, base + ".md");
-	for (let i = 2; existsSync(path); i++) path = join(dir, `${base}-${i}.md`);
-	const raw = `---\ntarget: entities/${input.entityId}.md\nvalidator: ${input.validator}\nchecked_at: ${input.checkedAt ?? stamp}\nresult: ${input.result}\n---\n\n${input.body.trim()}\n`;
-	writeFileSync(path, raw);
-	return path;
-}
-
-// ---- 会话尾部暂存（未固化素材，pending.md） ----
-
-/** 未固化尾部暂存文件名（记忆库根目录下） */
-const PENDING_TAIL_FILE = "pending.md";
-
-/** 覆盖写会话尾部素材（session_shutdown 全 reason 调用；纯 IO，不依赖 worker 进程存活） */
-export function writePendingTail(cwd: string, transcript: string): void {
-	writeFileSync(join(ensureMemoryDir(cwd), PENDING_TAIL_FILE), transcript, "utf8");
-}
-
-/** 是否存在未固化的会话尾部素材（空文件视为无） */
-export function hasPendingTail(cwd: string): boolean {
-	try {
-		return readFileSync(join(memoryDir(cwd), PENDING_TAIL_FILE), "utf8").trim().length > 0;
-	} catch {
-		return false;
-	}
-}
-
-/** 合并未固化尾部到 record 素材（有则拼接；无则原样）——auto 与手动 record 共用 */
-export function collectTranscriptWithPending(cwd: string, transcript: string): string {
-	let tail: string;
-	try {
-		tail = readFileSync(join(memoryDir(cwd), PENDING_TAIL_FILE), "utf8");
-	} catch {
-		return transcript;
-	}
-	return transcript ? `${transcript}\n\n[上一会话未固化尾部]\n${tail}` : tail;
-}
-
-/** 消费未固化尾部：auto 在 record worker 成功后调用；手动 record 在派发时调用 */
-export function clearPendingTail(cwd: string): void {
-	rmSync(join(memoryDir(cwd), PENDING_TAIL_FILE), { force: true });
 }
 
 // ---- 全库配对 ----

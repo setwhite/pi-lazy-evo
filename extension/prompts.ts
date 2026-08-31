@@ -1,12 +1,11 @@
 /**
- * 代理任务与提示词：手动命令（主会话注入）与 auto 挡（worker 子进程）共用同一任务语义。
+ * 代理任务与提示词：/memory 命令注入主会话的任务纯数据与提示词组装。
  * AgentTask 是"要代理干什么"的纯数据；规则细节以 protocol/ 手册为唯一真相源，
  * 提示词只说"按手册执行"，不复述手册内容。
  */
 import { join } from "node:path";
 import { GATE_LABEL, type GateState, type PendingEntity } from "./gate.ts";
 import { memoryDir } from "./store.ts";
-import { messageText } from "./utils.ts";
 import type { Runtime } from "./index.ts";
 
 // ---- 任务定义 ----
@@ -19,17 +18,18 @@ export interface AgentTask {
 	manuals: string[];
 	/** 任务指令：只描述做什么，不掺路径与素材 */
 	instructions: string;
-	/** 附带素材（record: 对话摘录；verify: 待验清单；query: 检索词） */
+	/** 附带素材（record: 用户附注；verify: 待验清单；query: 检索词） */
 	material?: string;
 }
 
-/** 记录任务：提炼实体，只读实体面 */
-export function recordTask(transcript?: string): AgentTask {
+/** 记录任务：只读实体面（取舍与门槛以 record.md 为准，此处不复述）。
+ * 素材就是代理当前会话的上下文——主会话代理即会话本身，不抽取转录重复喂入；附注只用于限定范围。 */
+export function recordTask(note?: string): AgentTask {
 	return {
 		formats: ["entities.md"],
 		manuals: ["record.md"],
-		instructions: "按手册提炼长期结论：先查已有实体判新增或更新，再写入。不记录临时性细节。",
-		material: transcript ? `近期对话素材：\n${transcript}` : undefined,
+		instructions: "按手册把本次会话中值得沉淀的结论写入库：先查已有实体判新增或更新，再写入。",
+		material: note ? `用户附注（限定记录范围）：${note}` : undefined,
 	};
 }
 
@@ -76,31 +76,6 @@ export function queryTask(terms: string, index: QueryIndexEntry[]): AgentTask {
 	};
 }
 
-// ---- 会话素材抽取 ----
-
-/** 会话条目最小结构：只取 type 与可选 message（与 pi 的 SessionEntry 结构兼容） */
-export interface TranscriptEntry {
-	type: string;
-	message?: { role?: string; content?: unknown };
-}
-
-/** 喂给记录任务的最近会话条目上限 */
-const TRANSCRIPT_ENTRY_LIMIT = 30;
-/** 每条消息文本截断长度 */
-const MESSAGE_TEXT_MAX = 2_000;
-
-/** 从会话抽取最近的对话素材（text 块拼合、逐条截断）——记录任务专用 */
-export function extractTranscript(entries: readonly TranscriptEntry[], limit = TRANSCRIPT_ENTRY_LIMIT): string {
-	const messages = entries
-		.filter((e) => e.type === "message" && e.message)
-		.slice(-limit)
-		.map((e) => {
-			const m = e.message!;
-			return `${m.role ?? "unknown"}: ${messageText(m.content)}`.slice(0, MESSAGE_TEXT_MAX);
-		});
-	return messages.join("\n\n");
-}
-
 // ---- 提示词组装与注入 ----
 
 /** 手册引用行：格式手册 + 操作手册绝对路径，按序阅读 */
@@ -110,7 +85,7 @@ function refLine(protocolDir: string, task: AgentTask): string {
 
 /**
  * 库根定义行：手册一律用"库根"指代记忆库根目录（不写字面路径），
- * 绝对路径只由两条通道的提示词给出——$MEMORY_DIR 覆盖时不会把手册与真路径劈成两套。
+ * 绝对路径只由提示词给出——$MEMORY_DIR 覆盖时不会把手册与真路径劈成两套。
  */
 function rootLine(cwd: string | undefined): string {
 	return `库根（记忆库根目录）= ${memoryDir(cwd)}。手册里的"库根"即指该目录，文件操作一律用此绝对路径。`;
@@ -125,15 +100,7 @@ export function buildAgentPrompt(task: AgentTask, protocolDir: string, cwd: stri
 	return parts.join("\n");
 }
 
-/** 主会话注入通道：任务 → 提示词 → dispatch 唤醒主会话代理（手动 /memory 命令用） */
+/** 主会话注入通道：任务 → 提示词 → dispatch 唤醒主会话代理（/memory 命令用） */
 export function injectTask(runtime: Runtime, task: AgentTask): void {
 	runtime.dispatch(buildAgentPrompt(task, runtime.protocolDir, runtime.cwd));
-}
-
-/** 子进程提示（auto 挡 worker 用）：独立上下文，自含角色/库根/轮数约束 */
-export function buildWorkerPrompt(task: AgentTask, protocolDir: string, cwd: string, maxTurns: number): string {
-	const parts = [`你是 pi-lazy-evo 记忆库代理。${rootLine(cwd)}`, `- 先读手册：${refLine(protocolDir, task)}。`, `- 任务：${task.instructions}`];
-	if (task.material) parts.push(`- 素材：\n${task.material}`);
-	parts.push(`- 约束：最多 ${maxTurns} 轮精简回复；不得触碰库根以外的任何内容；结束时用一句话总结。`);
-	return parts.join("\n");
 }

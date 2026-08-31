@@ -1,5 +1,5 @@
 /**
- * 依赖失效域：带 depends-on 覆盖的统一读库入口（commands / auto 共用）。
+ * 依赖失效域：带 depends-on 覆盖的唯一读库入口（/memory 各子命令共用）。
  * 失效是纯推导——最新 passed 验证之后依赖文件被改过即 stale，无缓存、无落盘；
  * 真相源始终只有实体 + 验证记录（gate.ts）。
  */

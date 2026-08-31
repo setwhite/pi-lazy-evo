@@ -8,12 +8,12 @@ import type { EntityMeta, EntityWithVerifications, VerificationRecord } from "./
 export type GateState = "passed" | "failed" | "none" | "stale";
 
 /** 门控四态全集（counts 初始化等遍历用） */
-export const GATE_STATES: readonly GateState[] = ["passed", "failed", "none", "stale"];
+const GATE_STATES: readonly GateState[] = ["passed", "failed", "none", "stale"];
 
 /** 容差窗口（毫秒）：验证时刻与正文修改在此窗口内视为"新鲜"。
  * 抵消粗粒度文件系统（容器挂载/SMB/FAT32）时间戳取整与"写实体→追加记录"同时刻竞争。
  * 偏大无实际代价：正文修改是低频手动操作。 */
-export const GRACE_MS = 3_000;
+const GRACE_MS = 3_000;
 
 /** 门控徽标（注入提示词：query 索引行 / verify 清单） */
 export const GATE_LABEL: Record<GateState, string> = {
@@ -24,7 +24,7 @@ export const GATE_LABEL: Record<GateState, string> = {
 };
 
 /** 门控结果 */
-export interface GateResult {
+interface GateResult {
 	/** 四态之一 */
 	state: GateState;
 	/** 最新验证记录（无记录时为 null） */
@@ -48,7 +48,7 @@ export function computeGate(meta: EntityMeta, verifications: VerificationRecord[
 export const NEEDS_VERIFICATION: ReadonlySet<GateState> = new Set(["none", "stale"]);
 
 /** 需要修正的门控状态：验证失败——先修正正文再复验，禁止对未修正正文重复验证 */
-export const NEEDS_FIX: ReadonlySet<GateState> = new Set(["failed"]);
+const NEEDS_FIX: ReadonlySet<GateState> = new Set(["failed"]);
 
 /** 实体与门控结果配对（gateLibrary 返回项） */
 export interface GatedEntity {
@@ -75,13 +75,13 @@ export function applyDepStaleness(gated: GatedEntity[], depMtime: (relPath: stri
 	}
 }
 
-/** 待验实体选取：指定 id 时全量复验该实体（含 passed/failed）；未指定挑 none/stale（验证）+ failed（修正），保持原顺序 */
+/** 待办实体选取：指定 id 时全量复验该实体（含 passed/failed）；未指定取全部非 passed 实体（none/stale 待验 + failed 待修正），保持原顺序 */
 export function selectPending(gated: GatedEntity[], targetId?: string): GatedEntity[] {
-	if (!targetId) return gated.filter((g) => NEEDS_VERIFICATION.has(g.gate.state) || NEEDS_FIX.has(g.gate.state));
+	if (!targetId) return gated.filter((g) => g.gate.state !== "passed");
 	return gated.filter((g) => g.meta.id === targetId);
 }
 
-/** 待验清单注入项（手动命令与 auto 挡共用） */
+/** 待验清单注入项（verify 任务用） */
 export interface PendingEntity {
 	id: string;
 	kind: string;
@@ -94,7 +94,7 @@ export function toPending(gated: GatedEntity[]): PendingEntity[] {
 }
 
 /** 全库摘要：四态计数 + 待验清单 + 待修正清单（overview 展示用） */
-export interface LibrarySummary {
+interface LibrarySummary {
 	counts: Record<GateState, number>;
 	/** 待验证：none / stale */
 	pending: { id: string; state: GateState }[];

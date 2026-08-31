@@ -4,18 +4,17 @@
  * 所有子命令只做"解析 → 调 store/gate/prompts → 通知"，业务聚合在 gate。
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, setMode, type MemoryMode } from "./config.ts";
-import { selectPending, summarizeLibrary, toPending, type GatedEntity } from "./gate.ts";
-import { clearPendingTail, collectTranscriptWithPending, ensureMemoryDir, hasPendingTail, listEntities } from "./store.ts";
-import { gatedLibrary } from "./deps.ts";
 import { injectTask, queryTask, recordTask, verifyTask, type QueryIndexEntry } from "./prompts.ts";
+import { selectPending, summarizeLibrary, toPending, type GatedEntity } from "./gate.ts";
+import { ensureMemoryDir, listEntities } from "./store.ts";
+import { gatedLibrary } from "./deps.ts";
 import { notify } from "./utils.ts";
 import type { Runtime } from "./index.ts";
 
 /** 子命令 handler 统一签名（展示类命令忽略 runtime） */
 type SubHandler = (args: string, ctx: ExtensionCommandContext, runtime: Runtime) => Promise<void>;
 
-/** 参数候选来源：静态列表（mode）或"关键字 + 动态读库"（verify：all + 实体 id） */
+/** 参数候选来源：静态列表或"关键字 + 动态读库"（verify：all + 实体 id） */
 type ArgValues = string[] | ((runtime: Runtime) => string[]);
 
 /** 子命令条目：路由键 + 帮助面板 + 补全候选 + handler（help 无 handler） */
@@ -31,6 +30,9 @@ interface SubcommandDef {
 /** /memory verify 参数里"全量清账"的关键字（保留词，validateId 禁止实体用此 id） */
 const VERIFY_ALL = "all";
 
+/** 待办清单里 id 的预览上限（超出折叠为计数） */
+const QUEUE_PREVIEW_MAX = 10;
+
 /** 子命令表（单一数据源：路由 / 帮助 / 补全共用） */
 const SUBCOMMANDS: SubcommandDef[] = [
 	{ name: "overview", hint: "", description: "library overview & verification queue", handler: overview },
@@ -43,7 +45,6 @@ const SUBCOMMANDS: SubcommandDef[] = [
 		handler: verify,
 		argValues: (runtime) => [VERIFY_ALL, ...(runtime.cwd ? listEntities(runtime.cwd).map((e) => e.id) : [])],
 	},
-	{ name: "mode", hint: "[auto|manual]", description: "show or switch mode", handler: mode, argValues: ["auto", "manual"] },
 	{ name: "help", hint: "", description: "show this help" },
 ];
 
@@ -58,7 +59,7 @@ function help(ctx: ExtensionCommandContext): void {
 /** 注册 /memory 入口（子命令按参数第一词查表路由） */
 export function registerMemoryCommands(pi: ExtensionAPI, runtime: Runtime): void {
 	pi.registerCommand("memory", {
-		description: "Memory library (subcommands: overview / record / query / verify / mode)",
+		description: "Memory library (subcommands: overview / record / query / verify)",
 		getArgumentCompletions: (prefix: string) => {
 			const [word, ...rest] = prefix.split(/\s+/);
 			const def = SUBCOMMANDS.find((s) => s.name === word);
@@ -91,43 +92,40 @@ export function registerMemoryCommands(pi: ExtensionAPI, runtime: Runtime): void
 	});
 }
 
-/** /memory overview：挡位 + 四态分布 + 待修正/待验清单（只展示，不注入） */
-async function overview(_args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
-	const config = loadConfig(ctx.cwd);
-	const mode = config.mode;
-	const gated = gatedLibrary(ctx.cwd);
-	if (!gated.length) {
-		const lines = [`Mode: ${mode}`, "Memory library is empty."];
-		if (mode === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
-		notify(ctx, "Memory Overview", lines);
-		return;
+/** 待办清单行（overview 与裸 verify 共用）：修正优先于验证；id 超长时折叠为计数 */
+function queueLines(gated: GatedEntity[]): string[] {
+	const { pending, fix } = summarizeLibrary(gated);
+	const lines: string[] = [];
+	for (const [label, list, action] of [
+		["Needs fix", fix, "Run /memory verify all — failed entities go through fix-then-reverify."],
+		["Needs verification", pending, "Run /memory verify all for a batch check."],
+	] as const) {
+		if (list.length === 0) continue;
+		const ids = list.map(({ id }) => id);
+		const shown = ids.length > QUEUE_PREVIEW_MAX ? [...ids.slice(0, QUEUE_PREVIEW_MAX), `… +${ids.length - QUEUE_PREVIEW_MAX}`] : ids;
+		lines.push(`${label} (${ids.length}): ${shown.join(", ")}`, action);
 	}
-	const { counts, pending, fix } = summarizeLibrary(gated);
-	const lines = [
-		`Mode: ${mode}`,
-		`Entities ${gated.length} | passed ${counts.passed} / failed ${counts.failed} / unverified ${counts.none} / stale ${counts.stale}`,
-	];
-	if (fix.length) {
-		lines.push(`Needs fix (${fix.length}): ${fix.map(({ id }) => id).join(", ")}`);
-		lines.push("Run /memory verify all — failed entities go through fix-then-reverify.");
-	}
-	if (pending.length) {
-		lines.push(`Needs verification (${pending.length}): ${pending.map(({ id, state }) => `${id} (${state === "none" ? "unverified" : "stale"})`).join(", ")}`);
-		lines.push("Run /memory verify all for a batch check.");
-	}
-	if (mode === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
-	notify(ctx, "Memory Overview", lines);
+	return lines;
 }
 
-/** /memory record [note]：派发记录任务（附注素材 + 未固化会话尾部，一并消费） */
+/** /memory overview：四态分布 + 待修正/待验清单（只展示，不注入） */
+async function overview(_args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
+	const gated = gatedLibrary(ctx.cwd);
+	if (!gated.length) {
+		notify(ctx, "Memory Overview", ["Memory library is empty."]);
+		return;
+	}
+	const { counts } = summarizeLibrary(gated);
+	notify(ctx, "Memory Overview", [
+		`Entities ${gated.length} | passed ${counts.passed} / failed ${counts.failed} / unverified ${counts.none} / stale ${counts.stale}`,
+		...queueLines(gated),
+	]);
+}
+
+/** /memory record [note]：派发记录任务。素材是代理当前会话本身（已在上下文里），附注只用于限定范围。 */
 async function record(args: string, ctx: ExtensionCommandContext, runtime: Runtime): Promise<void> {
-	// 消费语义与 auto 挡对齐：并入手柄在派发时；auto 中途切 manual 不会丢上一会话尾部
-	const hadTail = hasPendingTail(ctx.cwd);
-	injectTask(runtime, recordTask(collectTranscriptWithPending(ctx.cwd, args.trim())));
-	clearPendingTail(ctx.cwd);
-	const lines = ["Reminder injected — the agent will record memory now."];
-	if (hadTail) lines.push("Merged unflushed tail from the previous session.");
-	notify(ctx, "Memory Record", lines);
+	injectTask(runtime, recordTask(args.trim() || undefined));
+	notify(ctx, "Memory Record", ["Reminder injected — the agent will record memory now."]);
 }
 
 /** /memory query [terms]：注入检索任务（附预计算门控索引） */
@@ -152,7 +150,12 @@ async function verify(args: string, ctx: ExtensionCommandContext, runtime: Runti
 		return;
 	}
 	if (!target) {
-		notify(ctx, "Memory Verify", usageLines(all));
+		const queue = queueLines(all);
+		notify(ctx, "Memory Verify", [
+			`Usage: /memory verify ${VERIFY_ALL} — clear the whole queue (fix + verify)`,
+			`       /memory verify <id> — (re)verify one entity`,
+			...(queue.length ? queue : ["Queue is empty: nothing needs verification."]),
+		]);
 		return;
 	}
 	const gated = target === VERIFY_ALL ? selectPending(all) : selectPending(all, target);
@@ -163,47 +166,4 @@ async function verify(args: string, ctx: ExtensionCommandContext, runtime: Runti
 	injectTask(runtime, verifyTask(toPending(gated)));
 	const unit = gated.length === 1 ? "entity" : "entities";
 	notify(ctx, "Memory Verify", [`Reminder injected for ${gated.length} ${unit} — the agent will verify now.`]);
-}
-
-/** 用法 + 待办摘要（裸 verify 展示；id 清单超长时截断） */
-function usageLines(all: GatedEntity[]): string[] {
-	const { pending, fix } = summarizeLibrary(all);
-	const queue = [...fix, ...pending];
-	const shown = queue.map(({ id }) => id);
-	const more = shown.length > QUEUE_PREVIEW_MAX ? shown.slice(0, QUEUE_PREVIEW_MAX).concat(`… +${shown.length - QUEUE_PREVIEW_MAX}`) : shown;
-	return [
-		`Usage: /memory verify ${VERIFY_ALL} — clear the whole queue (fix + verify)`,
-		"       /memory verify <id> — (re)verify one entity",
-		queue.length ? `Queue (${queue.length}): ${more.join(", ")}` : "Queue is empty: nothing needs verification.",
-	];
-}
-
-/** 裸 verify 待办清单预览上限（超出折叠为计数） */
-const QUEUE_PREVIEW_MAX = 10;
-
-/** 模式含义（一行文案） */
-const MODE_LABEL: Record<MemoryMode, string> = {
-	auto: "commands + auto record & verify (live activity panel)",
-	manual: "commands only",
-};
-
-/** 未配置 autoModel 的提醒（切 auto / overview 时提示） */
-const AUTO_MODEL_HINT =
-	"autoModel not configured: auto tasks will use the main session model. Recommended: configure a cheap model (provider / id / thinking) under the pi-lazy-evo namespace in global settings.json.";
-
-/** /memory mode [auto|manual]：查看或切换挡位（只写全局 settings.json，不影响 prompt cache） */
-async function mode(args: string, ctx: ExtensionCommandContext, _runtime: Runtime): Promise<void> {
-	const wanted = args.trim().toLowerCase();
-	const config = loadConfig(ctx.cwd);
-	if (wanted !== "auto" && wanted !== "manual") {
-		notify(ctx, "Memory Mode", [
-			`Current mode: ${config.mode} (${MODE_LABEL[config.mode]}).`,
-			"Usage: /memory mode [auto|manual]",
-		]);
-		return;
-	}
-	const ok = setMode(wanted);
-	const lines = [ok ? `Mode switched to ${wanted} (${MODE_LABEL[wanted]}).` : `Failed to switch to ${wanted}.`];
-	if (ok && wanted === "auto" && !config.autoModel) lines.push(AUTO_MODEL_HINT);
-	notify(ctx, "Memory Mode", lines);
 }
