@@ -25,7 +25,7 @@
 | id | 与文件名一致 | 唯一标识 |
 | kind | tool / person / project / concept / decision | 类型 |
 | sources | URL / 本地路径 / 会话引用 | 出处，多条以 `；` 分隔，不重复 |
-| depends-on | 可选；仓库内相对路径逗号分隔（如 `extension/auto.ts`） | 只列直接影响断言的文件，不列间接依赖 |
+| depends-on | 可选；仓库内相对路径逗号分隔（如 `extension/gate.ts`） | 只列直接影响断言的文件，不列间接依赖 |
 
 ## 正文规则
 
