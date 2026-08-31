@@ -5,38 +5,44 @@
 `.memory/` 实体记忆库的治理协议 + pi 扩展：
 
 - **协议**（`extension/protocol/`）：实体与验证记录的格式、record/verify 操作手册，代理操作记忆库的唯一真相源；
-- **扩展**（TypeScript）：`/memory` 命令入口、门控计算、挡位与 auto worker；
+- **扩展**（TypeScript）：`/memory` 命令入口 + 门控计算，**只读库、不写库**；
 - **零工具注入**：扩展不注册专用工具，代理用通用工具（grep/read/write/bash）按手册操作 `.memory/`。
   工具集不被污染、prompt cache 不受影响、协议迭代无需扩展发版。
 
-## 结构与依赖
+## 结构
 
 ```
 extension/
-├── index.ts       # 装配入口：Runtime（协议路径 + dispatch + 会话 cwd）+ 注册命令与 auto 钩子
+├── index.ts       # 装配入口：Runtime（协议路径 + 派发通道 + 会话 cwd）+ 注册命令
 ├── commands.ts    # /memory 单一入口：子命令表（路由/帮助/补全单一数据源）
-├── auto.ts        # auto 挡：水位判定 / 启动冲刷 + 任务编排（尾部暂存在 store 域）
-├── worker.ts      # worker 子进程通道：--mode json 事件流 → 活动面板（前台可见）
-├── library.ts     # 库快照与 diff（auto 挡结果通知的数据基础）
-├── prompts.ts     # AgentTask 纯数据 + 提示词组装（主会话/worker 共用）
-├── store.ts       # 存储域：布局 / 实体 / 验证记录（尽力解析 + 非法忽略）/ 会话尾部暂存
-├── gate.ts        # 门控域：四态推导 / 依赖失效 / 待验筛选（纯计算，无 IO）
+├── store.ts       # 存储域：布局 / 实体 / 验证记录（尽力解析 + 非法忽略）/ 全库配对
+├── gate.ts        # 门控域：四态推导 / 依赖失效 / 待办筛选（纯计算，无 IO）
 ├── deps.ts        # 统一读库入口 gatedLibrary(cwd)
-├── config.ts      # settings.json pi-lazy-evo 命名空间读写
+├── prompts.ts     # AgentTask 纯数据 + 主会话提示词组装
 ├── utils.ts       # 纯工具：frontmatter / 校验 / 文本提取 / 通知
 └── protocol/      # 协议手册（代理执行契约）
 ```
 
-依赖方向 `index → {commands, auto} → {worker, prompts, library, gate, store, deps} → utils`。
-边界约定：一切读库走 `deps.gatedLibrary`；`commands` 只做"解析 → 调 store/gate/prompts → 通知"；
-`auto` 只做触发编排与任务串行/并发，任务语义来自 `prompts`；`prompts` 是任务纯数据，
-不复述手册内容（规则以 protocol/ 为唯一真相源）；`worker` 只管子进程通道与活动呈现。
+依赖方向 `index → commands → {prompts, deps → {gate, store}} → utils`。
+
+边界约定：
+
+- **一切读库走 `deps.gatedLibrary`**，调用方不自行拼装；
+- `commands` 只做"解析 → 调 store/gate/prompts → 通知"；
+- **扩展不写库**：唯一的写动作是 `ensureMemoryDir` 预建目录骨架。实体与记录由代理按手册用通用
+  `write` 工具直接落盘——这是"零工具注入"的推论，也是 `store.ts` 只有读侧 API 的原因；
+- `gate` 保持纯计算（不碰 IO、不 spawn 进程），mtime 等外部能力由 `deps` 注入；
+- `prompts` 是任务纯数据，不复述手册内容（规则以 `protocol/` 为唯一真相源）。
 
 ## 数据模型
 
 实体 `entities/<id>.md` 与验证记录 `verifications/<id>/<日期>[-N].md` 的字段、编号与时间戳规则
 以 `protocol/entities.md`、`protocol/verifications.md` 为准，代码不重复这些规则，
 读取层只做"尽力解析 + 非法忽略"的严格读取（包裹引号会剥离）。
+
+`validator` 是**透传字符串**：代码不校验取值、不参与门控、不做展示排序，只在手册里定义五级
+证据独立度（`claim` / `quote` / `corroborate` / `recompute` / `falsify`）。因此换词表是纯协议变更，
+旧值原样可读——这是"等级给人看、不给机器算"的落法。
 
 **门控四态**（❓none / ✅passed / ⚠️failed / ⏳stale）每次由"最新记录 checked_at vs
 正文 mtime vs depends-on 文件 mtime"实时推导，不落盘、无缓存文件；
@@ -45,58 +51,33 @@ extension/
 ## 命令流
 
 `/memory` 按参数第一词路由（pi 派发只匹配 `/` 后第一个词，多词命令名不可达）。
-补全两级：子命令词 + 参数候选；pi 选中值整体替换参数串，因此参数候选 value 须带子命令词（如 `mode auto`）。
+补全两级：子命令词 + 参数候选；pi 选中值整体替换参数串，因此参数候选 value 须带子命令词。
 
 - `overview`：读库 → 门控 → 展示四态计数与待修正/待验清单（不注入）
-- `record` / `query` / `verify`：`recordTask / queryTask / verifyTask → injectTask` 注入主会话，
-  代理按协议执行；职责边界——扩展只把清单/索引算好注入，动作本身交给代理。
-  verify 显式参数：`all` 清全库积压（待验+待修正），`<id>` 单实体复验，裸命令只展示用法与待办摘要——
-  不打参数不动库（`all` 是保留 id，`utils.validateId` 拒为实体名）
-- `mode`：读写全局 settings.json 的 `pi-lazy-evo` 命名空间（mode 只存全局，不改任何模型可见面）
+- `record [note]`：`recordTask(note?)` → `injectTask` 注入主会话。**不抽取会话转录**——主会话代理即会话
+  本身，素材已在它的上下文里，附注只用于限定范围
+- `query [terms]`：注入全库索引（门控预计算），grep 与相关性判断交给代理自带工具
+- `verify all` / `verify <id>`：清全库积压或单实体复验。`all` 是保留 id，`utils.validateId` 拒为实体名；
+  裸命令只展示用法与待办摘要，不打参数不动库
 
-手动命令与 auto 挡共用同一套 AgentTask 语义，仅通道不同：手动走主会话注入，auto 走 worker 子进程。
-
-## auto 挡
-
-turn_end 水位触发 + session_start 启动冲刷，两条通道同一套 runAutoTasks；
-session_shutdown 只把会话尾部落盘 `.memory/pending.md`（纯 IO，不 spawn）；
-消费方两条通道共用：auto 的 `runAutoTasks` 与手动 `/memory record`（派发时并入并消费，
-防 auto 中途切 manual 后尾部素材永久搁置）。
-
-**钩子只在宿主会话生效**（`autoHooksEnabled(ctx.mode)`，三个钩子入口早退）：worker 子进程同样加载本扩展
-并走完 session 生命周期，且与宿主共用同一 `.memory/`——若不早退，session_start 见到 `pending.md` 会再
-spawn 一个 worker（无界递归），session_shutdown 会把 worker 自己的转录写进 `pending.md`（覆盖宿主素材）。
-
-**水位判定**（`decideAutoTrigger`，纯函数）：会话累计 token 增量达到 `autoWatermarkTokens` 触发一次。
-三个防循环规则：首次观察只吸收基线；token 回落（compaction）重设基线；worker 在跑（inFlight）时吸收增量。
-
-**worker 子进程（前台可见）**：提示词写临时文件，spawn `pi --mode json --no-session`，
-`--tools` 白名单、`--model` 便宜模型（缺省主模型）、`--thinking low`。
-stdout 事件流逐行解析（`turn_start` / `tool_execution_start`），每个 worker 在活动面板
-（`ctx.ui.setWidget`，编辑器上方）占一行（行键 = 任务/实体 id），全部结束后面板清除、汇总一条通知。
-成败仍以库快照 diff 判定（事件流只做展示，退出码仅兜底报错）；主进程存活期 10 分钟超时强杀进程树；
-主进程退出后管道断裂，worker 随会话终止（前台语义，不留孤儿）。
-
-**verify 只清增量债**：验证对象 = 本轮 record 新增/更新的实体（`autoVerifyTargets`，由前后快照 diff 得出），
-不重验存量积压（否则每轮触发都 O(积压) 重跑且无退避）；汇总通知带 `backlog N: …` 提醒行
-（`leftoverStock` / `backlogLines`），引导手动 `/memory verify all` 清账——auto 不碰存量，只报账。
-每个实体一个 worker（不做清单切块），`runBounded` 按 `autoVerifyConcurrency`（默认 8）分波并发。
-
-**ctx 生命周期**：事件 ctx 在会话替换（new/resume/reload）后失效，不得跨 await 持有——
-处理器内只取纯值（cwd/transcript），通知与活动面板走 stale 兜底闭包（guardNotify / guardActivity）。
+`overview` 与裸 `verify` 共用 `queueLines()` 渲染待办（修正优先于验证，超长折叠为计数）。
+扩展的职责边界始终是**把清单/索引算好注入，动作本身交给代理**。
 
 ## 设计决策
 
 | 决策 | 理由 |
 |---|---|
 | 零工具注入 | 工具集不污染、prompt cache 不受影响、协议迭代无需发版 |
+| **扩展只读库、不写库** | 零工具注入的直接推论。曾经有过的写侧 API（`writeEntity` / `appendVerification`）生产零调用，只有测试在用——测试走生产不走的路径，掩盖过 `depends-on` 字段丢失这类缺陷 |
+| **没有自动挡** | 自动挡的成本在 record worker：为"以后可能有用"的候选预付最贵的智能。而"写时判断不了价值"这个诊断的主语本来是模型——去掉 auto 后 record 全部由人发起，判断者换成知道自己要什么的人，问题不再结构性存在 |
+| **价值判定与清理都归人** | 人发起 record、人决定删除（出库只有删文件一条路）。因此**不做 TTL / 自动过期 / 静默过滤**：机制藏记录是隐性的，人会误以为"记过却查不到"；显式删文件比自动屏蔽诚实 |
+| **验证器按证据独立性命名列，不按工具名** | 判据：被验对象为假时这个机制会不会报错。工具命名（`code:` / `web-research`）混入贵重感，让"跑 grep 拿眼看"和"确定性退出码检查"共用一个标签；按独立度命名后等级与手段合一，不需要额外的 level / object / falsifier 字段 |
+| **不做机械重放层**（曾设计实体 `check` 命令 + spawn） | 要破"扩展不执行验证器"这条纪律，而现存记录可重放率为 0（`code:` 全是描述不是命令），收益不确定。代码类实体的新鲜度继续由免费的 depends-on/mtime 门控承担 |
 | grep 检索而非向量索引 | 库小、零依赖、无预计算 |
 | 验证只追加不覆盖 | 可审计 |
 | 门控实时计算、否决 state.json | 状态永远由实体+验证记录两个真相推出；早期缓存落盘实现被发现字段只写不读 |
 | 断言编号不回填存量 | 批量迁移是纯债；修正/新增自然生效，failed 记录首行编号清单驱动修正 |
-| 任务语义两条通道共用 | 手动与 auto 同一套 AgentTask，改动只在一处 |
-| auto verify 只验本轮增量、每实体一 worker | 全库重验是 O(积压) 成本且无退避；auto 管增量并提醒存量积压，manual `verify all` 清存量 |
+| 存量与新词表不做映射 | 旧工具名取值一律按最低级 `claim` 理解（手册一句话，零代码）。给存量发它没挣到的等级，比"全库看起来都没验证过"更糟 |
 | 手册唯一真相源，提示词不复述 | 改手册即改行为，不用动代码；提示词短、省 token |
-| 事件流只做活动展示 | 成败以文件系统快照判定，UI 通道与正确性解耦 |
 | query 门控预计算注入 | 死板计算留在扩展代码，代理只做语义判断 |
-| mode 只写全局 settings.json | 用户偏好：不入库、不随仓库分发；切换不改模型可见面，不影响 prompt cache |
+| 配置面为零 | 没有挡位、没有 worker 参数、没有 settings 命名空间——`MEMORY_DIR` 一个环境变量够用。扩展的可调面越小，行为越可预测 |

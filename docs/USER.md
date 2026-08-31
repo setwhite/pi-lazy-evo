@@ -1,57 +1,30 @@
 # 用户指南
 
-`/memory` 是唯一入口，6 个子命令。命令只是扳机：读写与验证由代理按 `extension/protocol/` 手册执行，
-扩展不注入专用工具。输入 `/memory ` 自动弹出子命令候选，裸 `/memory` 或 `/memory help` 显示帮助。
+`/memory` 是唯一入口，5 个子命令。命令只是扳机：读写与验证由代理按 `extension/protocol/` 手册执行，
+扩展不注入专用工具、**也不写库**（代理用通用工具直接落盘）。输入 `/memory ` 自动弹出子命令候选，
+裸 `/memory` 或 `/memory help` 显示帮助。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `/memory overview` | 挡位、四态分布、待修正/待验清单（只展示，不派任务） |
-| `/memory record [note]` | 把近期长期结论写入记忆库；附注可限定范围；自动并入并消费上一会话未固化尾部 |
+| `/memory overview` | 四态分布、待修正/待验清单（只展示，不派任务） |
+| `/memory record [note]` | 沉淀实体。素材就是代理当前会话；附注用于限定范围 |
 | `/memory query [terms]` | grep 检索记忆库；无关键词则由代理从会话推断 |
 | `/memory verify all` | 清全库积压：unverified/stale 验证 + failed 修正（先改正文再复验） |
 | `/memory verify <id>` | 全量复验该实体（含 passed）；裸 `/memory verify` 只展示用法与待办清单，不动库 |
-| `/memory mode [auto\|manual]` | 查看或切换挡位 |
 | `/memory help` | 显示命令帮助 |
 
-## 挡位
+## 谁判断价值：你
 
-- `manual`（默认）：只有手动 `/memory` 命令触碰记忆库
-- `auto`：会话按 token 水位自动跑 record + verify；离开会话时尾部素材落盘、下次启动立即固化。
-  verify 只验**本轮新增/更新的实体**（每实体一个 worker）；存量积压不自动碰，
-  汇总通知会带一行积压提醒（`backlog N: …`），看到再跑 `/memory verify all` 清账即可。
-  worker 在前台可见：编辑器上方活动面板每个 worker 一行（record / 实体 id），实时显示"第几轮 · 正在做什么"，
-  结束即清除并汇总一条通知
+没有自动挡，也没有后台任务——**记忆库只在你动手时变化**。这带来一条分工：
 
-auto 配置在 `pi-lazy-evo` 命名空间（实时生效，改完即用）。mode 只存全局
-`~/.pi/agent/settings.json`（用户偏好，不入库不随仓库分发，`/memory mode` 切换的就是它）；
-其余字段全局与项目 `.pi/settings.json` 合并，项目覆盖全局。
-
-| 字段 | 默认 | 存放 | 说明 |
-|---|---|---|---|
-| `mode` | `manual` | 全局 | 运行挡位 |
-| `autoWatermarkTokens` | 32000 | 全局/项目 | 会话新增 token 达此值触发一次，越小越勤 |
-| `autoModel` | 缺省用主会话模型 | 全局/项目 | `provider` / `id` / `thinking`（默认 `low`） |
-| `autoMaxTurns` | 16 | 全局/项目 | worker 轮数上限（提示词软约束；另有 10 分钟超时强杀兜底） |
-| `autoVerifyConcurrency` | 8 | 全局/项目 | auto verify 并发上限：每实体一个 worker，超出按波次排队 |
-| `autoMemoTools` | read,grep,ls,bash,write,edit | 全局/项目 | record worker 工具白名单 |
-| `autoVerifyTools` | 左列 + web_search,web_fetch | 全局/项目 | verify worker 工具白名单 |
-
-```jsonc
-// 全局 ~/.pi/agent/settings.json（mode 唯一存放处）
-{"pi-lazy-evo": {
-  "mode": "auto",
-  "autoWatermarkTokens": 30000,
-  "autoModel": {"provider": "openrouter", "id": "gpt-4o-mini", "thinking": "low"},
-  "autoMaxTurns": 8
-}}
-```
-
-白名单是**替换**语义：填了就按填的来，别漏 read/grep/write。联网验证依赖搜索 provider，
-先 `/web-tools` 配好再开 auto。未配置 `autoModel` 时切 auto / 看 overview 会提示配置
-（缺省将用主会话模型跑自动任务，注意成本）。全局 settings 路径可用 `PI_GLOBAL_SETTINGS_FILE`
-覆盖（多用户隔离/测试）。
+- **什么值得留下**：由你判断。`/memory record` 这个动作本身就是一次价值声明，代理不替你猜
+  "以后会不会用"，它只保证写进去的每条断言可核对。
+- **库会不会变脏**：由你负责清理。**删除实体文件是唯一的出库方式**（扩展永不删除，也没有自动过期）。
+  怀疑某条已经没用或已经错了，`/memory query` 找到它、`/memory verify <id>` 复核、或直接删文件。
+- **代价**：库只会随你的使用增长。定期（比如攒到几十条时）跑一次 `/memory overview` 看积压清单，
+  顺手 `/memory verify all` 清一轮。
 
 ## 门控四态
 
@@ -69,12 +42,17 @@ auto 配置在 `pi-lazy-evo` 命名空间（实时生效，改完即用）。mod
 行为的实体可在 front-matter 声明 `depends-on`（仓库内相对路径）：代码一变，对应实体的
 passed 自动降 stale，无需人工发现；失效实时推导，无缓存文件。
 
+引用一条 `none/stale/failed` 的实体去影响当前决策前，先对它跑一次 `/memory verify <id>`。
+
 ## 验证记录
 
 每次验证追加一条记录到 `verifications/<实体id>/` 子目录（按实体归位，同日多条自动加序号）：
 front-matter 四字段（target / validator / checked_at / result），证据写在正文、必填；
 failed 记录首行列无效断言编号，让修正有精确落点。记录只追加不覆盖，历史可审计。
-验证器取值见 `extension/protocol/verifications.md`，代理按手册执行，用户不直接操作。
+
+`validator` 按**证据独立性**分五级（`claim` < `quote` < `corroborate` < `recompute` < `falsify`），
+不按工具命名——"跑了个命令拿眼看输出"和"跑了个确定性退出码检查"不是同一级。判据与定级纪律见
+`extension/protocol/verifications.md`。早期记录的工具名取值按最低级 `claim` 理解，不回填、不映射。
 
 ## 记忆库
 
